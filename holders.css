@@ -1,0 +1,63 @@
+.holders-page .page-title { margin-top: 14px; margin-bottom: 22px; }
+.holder-market, .holder-panel { border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
+.holder-market, .holder-panel-head, .holder-side-row, .holder-view-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 16px; }
+.holder-market { padding: 16px; }
+.holder-market-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.holder-market-actions :is(button, a) { min-height: 36px; height: auto; padding: 7px 11px; font-size: .82rem; }
+.holder-market-identity { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.holder-market-identity h2 { line-height: 1.25; }
+.holder-market-identity .muted, .holder-panel-head .muted, .holder-scan-status, #holder-table-note { font-size: .82rem; }
+.holder-market-date { margin-top: 3px; }
+.holder-note { padding: 10px 12px; margin-top: 12px; border-inline-start: 2px solid #9baae8; background: #151c2c; border-radius: 0 8px 8px 0; font-size: .84rem; }
+.holder-panel { margin-top: 14px; padding: 15px; }
+.holder-controls, .holder-analysis-actions { display: flex; align-items: flex-end; gap: 6px 10px; flex-wrap: wrap; }
+.holder-controls label { display: grid; gap: 3px; margin: 0; color: var(--muted); font-size: .74rem; }
+.holder-controls select { min-height: 37px; min-width: 100px; padding: 0 9px; border: 1px solid var(--border); border-radius: 8px; background: #111620; color: inherit; font: .86rem system-ui; }
+.holder-side-row, .holder-view-bar { margin-top: 12px; }
+.holder-panel .secondary-button { min-height: 35px; height: auto; padding: 7px 11px; }
+.holder-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 12px; }
+.holder-metrics > div { background: #101620; border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; }
+.holder-metrics dt { font-size: .74rem; }
+.holder-metrics dd { font-size: 1rem; }
+.holder-metrics small { color: var(--muted); font-size: .69rem; display: block; }
+.holder-scan-status { margin-top: 8px; }
+#holder-table-note { margin: 8px 0; }
+.holders-page #holder-method { left: auto; right: 0; }
+#holder-table { margin-top: 5px; table-layout: fixed; }
+#holder-table th { white-space: normal; }
+#holder-table td { padding: 8px 9px; background: #111720; }
+#holder-table tr:nth-child(2n) td { background: #171e2b; }
+#holder-table th:first-child { width: 38%; }
+#holder-table td:first-child { border-radius: 9px 0 0 9px; }
+#holder-table td:last-child { border-radius: 0 9px 9px 0; }
+.holder-wallet-button { height: auto; padding: 2px 1px; display: inline-flex; align-items: center; gap: 5px; max-width: 100%; white-space: normal; text-align: start; overflow-wrap: anywhere; }
+.holder-rank { min-width: 2.5ch; color: var(--muted); font: .75rem ui-monospace, monospace; }
+.holder-rate { display: block; }
+.holder-rate small { display: block; color: var(--muted); font-size: .7rem; }
+.holder-pages > span { font-size: .82rem; text-align: center; }
+#holder-signal { margin-top: 10px; }
+.holder-signal-flag { color: #ffd0a6; }
+.holder-insights .holder-metrics { margin-bottom: 8px; }
+.holder-dialog { width: min(610px, calc(100% - 26px)); }
+.holder-dialog p { overflow-wrap: anywhere; }
+.holder-wallet-section { margin-top: 14px; }
+.holder-wallet-section ul { display: grid; gap: 5px; margin: 6px 0 0; padding: 0; list-style: none; }
+.holder-wallet-section li { padding: 7px 9px; border-radius: 8px; background: #111620; }
+.holder-wallet-section small { display: block; font-size: .75rem; }
+.holder-review-actions { display: flex; gap: 8px; margin-top: 14px; }
+.holder-review-progress { display: flex; gap: 8px; align-items: baseline; }
+#holder-review-report p { margin-top: 5px; }
+#holder-review-report ul { margin: 8px 0; padding-left: 18px; }
+@media (max-width: 760px) {
+  .holder-panel { padding: 12px; }
+  #holder-table thead { position: absolute; }
+  #holder-table tbody tr { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; background: #111720; }
+  #holder-table tbody tr:nth-child(2n) { background: #171e2b; }
+  #holder-table tbody td { padding: 0; background: transparent; }
+  #holder-table td:first-child { padding-bottom: 4px; }
+  .holder-market .button-link { font-size: .79rem; }
+}
+@media (max-width: 390px) {
+  .holder-panel .chart-ranges button { padding-inline: 5px; }
+  .holder-metrics > div { padding-inline: 6px; }
+}

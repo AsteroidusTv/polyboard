@@ -25,6 +25,7 @@ FILES = {
     "/robots.txt": ("robots.txt", "text/plain"),
     "/trades": ("trades.html", "text/html"),
     "/precedents": ("precedents.html", "text/html"),
+    "/holders": ("holders.html", "text/html"),
     "/markets": ("markets.html", "text/html"),
     "/style.css": ("style.css", "text/css"),
     "/markets.css": ("markets.css", "text/css"),
@@ -34,6 +35,8 @@ FILES = {
     "/app.js": ("app.js", "text/javascript"),
     "/trades.js": ("trades.js", "text/javascript"),
     "/precedents.js": ("precedents.js", "text/javascript"),
+    "/holders.js": ("holders.js", "text/javascript"),
+    "/holders.css": ("holders.css", "text/css"),
     "/markets.js": ("markets.js", "text/javascript"),
     "/watchlist.js": ("watchlist.js", "text/javascript"),
     "/watchlist-sw.js": ("watchlist-sw.js", "text/javascript"),
@@ -275,6 +278,11 @@ class Dashboard(BaseHTTPRequestHandler):
             from watchlist import serve
 
             serve(self, self.watchlist)
+            return
+        if url.path == "/api/holders":
+            from holders import serve
+
+            serve(self, query)
             return
         public_path = url.path.removeprefix("/api/public") if url.path.startswith("/api/public/") else ""
         if public_path in ("/positions", "/portfolio", "/trades") or url.path in ("/positions", "/portfolio") or (

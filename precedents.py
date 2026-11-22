@@ -440,19 +440,28 @@ def candidate_markets(target, scope):
     return (row for raw, event in events.values() if (row := market_row(raw, event))), more
 
 
-def settlement(row, record):
+def resolved_winner(record):
     if (record.get("status") or "").lower() not in ("resolved", "settled"):
         return None
     resolved = epoch(record.get("resolved_at")) or epoch(record.get("last_update_timestamp"))
     if not resolved:
         return None
-    outcome = row["outcome"]
     payouts = record.get("payouts")
-    if isinstance(payouts, list) and len(payouts) == 2:
-        if sorted(payouts) != [0, 1]:
-            return None
-        outcome = int(payouts[row["yes_index"]])
-    if outcome not in (0, 1):
+    if isinstance(payouts, list) and len(payouts) == 2 and all(type(value) in (int, float) and isfinite(value) for value in payouts):
+        if min(payouts) == 0 and max(payouts) > 0:
+            return resolved, payouts.index(max(payouts))
+    return None
+
+
+def settlement(row, record):
+    if winner := resolved_winner(record):
+        resolved, index = winner
+        return resolved, int(index == row["yes_index"])
+    if record.get("payouts") or (record.get("status") or "").lower() not in ("resolved", "settled"):
+        return None
+    resolved = epoch(record.get("resolved_at")) or epoch(record.get("last_update_timestamp"))
+    outcome = row["outcome"]
+    if not resolved or outcome not in (0, 1):
         return None
     return resolved, outcome
 
@@ -578,13 +587,8 @@ def comparison_sample(entries, target, limit, broader_slots):
     return focused[:focused_count] + broader[:limit - focused_count]
 
 
-@lru_cache(maxsize=64)
-def study(slug, scope, api, bucket, extended=True):
-    if extended:
-        base = cached_study(slug, scope, api, bucket, False)
-        if not base or not base["extra_horizons"]:
-            return base
-        return study_prices(base, base["extra_horizons"], api)
+@lru_cache(maxsize=96)
+def comparable_sample(slug, scope, api, bucket):
     target = target_market(slug)
     if not target:
         return None
@@ -596,7 +600,7 @@ def study(slug, scope, api, bucket, extended=True):
         record = next((row for row in rows if row["condition_id"] == target["condition"]), {})
         target_resolution = settlement(target, record)
         if not target_resolution:
-            return {"target": overview, "cases": [], "horizons": [score([], offset) for offset in defaults],
+            return {"target": overview, "cases": [], "horizons": [],
                     "default_horizons": defaults, "extra_horizons": (),
                     "matched": 0, "unusable": 0, "truncated": False, "status": "target_unverified"}
         cutoff, outcome = target_resolution
@@ -639,15 +643,27 @@ def study(slug, scope, api, bucket, extended=True):
     selected = comparison_sample(eligible, target, MAX_CASES, 6)
     selected.sort(key=lambda entry: (entry[1] not in BROADER_MATCHES,
                                      similar_duration(target, entry[0]), entry[2]), reverse=True)
-    cases = [{**summary(row), **{key: row[key] for key in ("condition", "listed", "closed_at", "yes_token")},
+    cases = [{**summary(row), **{key: row[key] for key in ("condition", "listed", "closed_at", "yes_token", "yes_index")},
               "reason": reason, "broader": reason in BROADER_MATCHES,
               "resolved_at": resolved, "outcome": outcome, "prices": {}}
              for row, reason, resolved, outcome in selected]
-    base = {"target": overview, "cases": cases, "horizons": [], "default_horizons": defaults,
+    return {"target": overview, "cases": cases, "horizons": [], "default_horizons": defaults,
             "extra_horizons": extended_offsets(defaults, selected), "matched": len(eligible),
             "unusable": len(candidates) - len(eligible) - excluded, "other_duration": excluded,
             "truncated": more or len(eligible) > MAX_CASES, "failed_quotes": 0}
-    return study_prices(base, defaults, api)
+
+
+@lru_cache(maxsize=64)
+def study(slug, scope, api, bucket, extended=True):
+    if extended:
+        base = cached_study(slug, scope, api, bucket, False)
+        return study_prices(base, base["extra_horizons"], api) if base and base["extra_horizons"] else base
+    base = comparable_sample(slug, scope, api, bucket)
+    if base is None:
+        return None
+    if base.get("status") == "target_unverified":
+        return {**base, "horizons": [score([], offset) for offset in base["default_horizons"]]}
+    return study_prices(base, base["default_horizons"], api)
 
 
 def study_prices(base, offsets, api):
@@ -719,6 +735,6 @@ def compare_markets(slug, scope, wallet, api, pages, extended=True):
             wallet_available = False
     return {**result, "target": {**target, "closed": context["state"] == "closed", "context": context},
             "scope": scope, "wallet_available": wallet_available,
-            "cases": [{**{key: value for key, value in row.items() if key not in ("yes_token", "listed", "closed_at")},
+            "cases": [{**{key: value for key, value in row.items() if key not in ("yes_token", "yes_index", "listed", "closed_at")},
                        "traded": row["condition"] in traded if wallet_available else None}
                       for row in result["cases"]]}

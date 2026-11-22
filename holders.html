@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Holder analysis · Polyboard</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/holders.css">
+  <link rel="stylesheet" href="/watchlist.css">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <script src="/charts.js" defer></script>
+  <script src="/dashboard-widgets.js" defer></script>
+  <script src="/dashboard-settings.js" defer></script>
+  <script src="/watchlist.js" defer></script>
+  <script src="/holders.js" defer></script>
+</head>
+<body>
+  <main class="dashboard-page holders-page">
+    <header>
+      <a class="back-link" id="holder-back" href="/markets">← New trade</a>
+      <div class="page-title">
+        <h1>Holder analysis</h1>
+        <div class="dashboard-actions">
+          <button type="button" class="secondary-button toolbar-button watch-bell" data-watch-bell aria-label="Notifications" aria-haspopup="dialog"></button>
+          <button type="button" class="secondary-button toolbar-button" data-open-settings aria-haspopup="dialog" aria-controls="settings-dialog">Settings</button>
+        </div>
+      </div>
+    </header>
+    <p id="holder-loading" class="muted" role="status">Loading holder list…</p>
+    <div id="holder-error" class="empty" hidden><p class="negative" role="alert"></p><button type="button" id="holder-retry" class="secondary-button">Try again</button></div>
+
+    <div id="holder-view" hidden>
+      <header class="holder-market">
+        <div class="holder-market-identity">
+          <img class="icon" id="holder-market-icon" alt="" hidden>
+          <div>
+            <p id="holder-event-title" class="muted"></p>
+            <h2 id="holder-market-title"></h2>
+            <p id="holder-market-date" class="muted"></p>
+          </div>
+        </div>
+        <div class="holder-market-actions">
+          <button class="secondary-button" type="button" id="holder-review-launch" aria-haspopup="dialog" hidden>Review with Codex</button>
+          <a id="holder-polymarket" class="secondary-button button-link" target="_blank" rel="noopener noreferrer">Open on Polymarket ↗</a>
+        </div>
+      </header>
+      <p id="holder-historical-note" class="holder-note muted" hidden></p>
+
+      <section class="holder-panel" aria-labelledby="holder-roster-title">
+        <div class="holder-panel-head">
+          <div><h2 id="holder-roster-title">Holders by outcome</h2><p id="holder-coverage" class="muted"></p></div>
+          <div class="holder-controls">
+            <label>Sample
+              <select id="holder-limit">
+                <option value="25">Top 25</option><option value="50" selected>Top 50</option>
+                <option value="100">Top 100</option><option value="1000">Top 1,000</option><option value="all">All available</option>
+              </select>
+            </label>
+            <label>Similar markets
+              <select id="holder-scope"><option value="focused">Same family</option><option value="broad">Broader</option></select>
+            </label>
+          </div>
+        </div>
+        <div class="holder-side-row">
+          <div class="chart-ranges" id="holder-outcomes" role="group" aria-label="Choose holder outcome">
+            <button type="button" aria-pressed="true"></button>
+            <button type="button" aria-pressed="false"></button>
+          </div>
+          <div class="holder-analysis-actions">
+            <button type="button" class="secondary-button" id="holder-scan">Analyze holders</button>
+            <button type="button" class="secondary-button" id="holder-stop" hidden>Stop</button>
+          </div>
+        </div>
+        <dl class="holder-metrics" id="holder-results"></dl>
+        <p id="holder-scan-status" class="muted holder-scan-status" role="status"></p>
+        <div class="holder-view-bar">
+          <div class="chart-ranges" id="holder-period" role="group" aria-label="Holder performance view">
+            <button type="button" data-period="recent" aria-pressed="true">Recent</button>
+            <button type="button" data-period="history" aria-pressed="false">History</button>
+            <button type="button" data-period="similar" aria-pressed="false">Similar markets</button>
+          </div>
+          <div class="info-control">
+            <button type="button" class="info-trigger" data-info-trigger aria-expanded="false" aria-controls="holder-method">ⓘ Method</button>
+            <p id="holder-method" class="info-bubble" hidden>Rank uses reported net shares for each outcome. P&amp;L groups decided positions by market. Recent uses up to 20 markets. History reads up to 100 positions per lifecycle status and verifies up to 40 market outcomes. Correct picks require a public buy before official resolution on a single observed side. Similar uses the Market precedents sample. Counts include each wallet's own record. Several holders may have traded the same event.</p>
+          </div>
+        </div>
+        <p id="holder-table-note" class="muted"></p>
+        <p id="holder-empty" class="empty" hidden>No public holders were returned for this outcome.</p>
+        <table id="holder-table" aria-label="Holder performance">
+          <thead><tr>
+            <th scope="col">Holder</th><th scope="col">Net shares</th><th scope="col">Profitable markets</th><th scope="col">Correct picks</th>
+          </tr></thead>
+          <tbody id="holder-rows"></tbody>
+        </table>
+        <nav class="holder-pages holder-side-row" aria-label="Holder pages" id="holder-pages">
+          <button class="secondary-button" type="button" id="holder-prev">Previous</button>
+          <span class="muted" id="holder-page"></span>
+          <button class="secondary-button" type="button" id="holder-next">Next</button>
+        </nav>
+      </section>
+
+      <section class="holder-panel holder-insights" aria-labelledby="holder-signal-title">
+        <div class="holder-panel-head"><div><h2 id="holder-signal-title">Trading activity</h2><p id="holder-signal-window" class="muted"></p></div>
+        </div>
+        <div id="holder-signal" role="status"><p class="muted">Checking public trading activity…</p></div>
+        <div class="info-control">
+          <button type="button" class="info-trigger" data-info-trigger aria-expanded="false" aria-controls="holder-activity-method">ⓘ Activity method</button>
+          <p id="holder-activity-method" class="info-bubble" hidden>The activity flag requires at least 15 trades in each window, $5,000 in six-hour turnover, an hourly rate at least three times the preceding 18 hours, and at least 75% of turnover toward one side. Hedging, public news and thin liquidity can produce similar patterns.</p>
+        </div>
+      </section>
+    </div>
+
+    <dialog id="holder-wallet-dialog" class="watch-dialog holder-dialog" aria-labelledby="holder-wallet-title">
+      <header class="watch-dialog-head">
+        <div><h2 id="holder-wallet-title">Wallet activity</h2><p id="holder-wallet-address" class="muted"></p></div>
+        <form method="dialog"><button type="submit" class="text-button activity-dismiss" aria-label="Close wallet activity">×</button></form>
+      </header>
+      <div class="watch-dialog-body" id="holder-wallet-body"></div>
+    </dialog>
+    <dialog id="holder-review-dialog" class="watch-dialog holder-dialog" aria-labelledby="holder-review-title">
+      <header class="watch-dialog-head">
+        <div><h2 id="holder-review-title">Holder review</h2><p class="muted">Uses up to 25 wallets per outcome and recent public sources.</p></div>
+        <form method="dialog"><button type="submit" class="text-button activity-dismiss" aria-label="Close holder review">×</button></form>
+      </header>
+      <div class="watch-dialog-body">
+        <div class="holder-review-progress">
+          <span id="holder-review-dots" class="codex-loading-dots" aria-hidden="true" hidden><span></span><span></span><span></span></span>
+          <p id="holder-review-status" class="muted" role="status"></p>
+        </div>
+        <article id="holder-review-report" hidden></article>
+        <div class="holder-review-actions">
+          <button type="button" id="holder-review-run" hidden>Run review</button>
+          <button type="button" id="holder-review-connect" class="secondary-button" hidden>Open Codex settings</button>
+        </div>
+      </div>
+    </dialog>
+  </main>
+</body>
+</html>

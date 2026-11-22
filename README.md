@@ -90,6 +90,14 @@ The dashboard stores follows and alerts in SQLite, tied to an HttpOnly cookie in
 
 On the hosted dashboard, load a wallet and click **Personalized picks** from Portfolio or New trade. It uses the same private review key. The worker scans open Polymarket markets with at least $500 in reported liquidity, shortlists by trade history and spread, and checks the shortlisted order books. Codex returns up to five related markets and up to two exploratory ideas with reasons to pass and a trigger to watch. The report shows scan coverage.
 
+## Holder analysis
+
+Open an outcome market, then select **Holder analysis**. Historical comparison rows also link to their holders. Choose a cohort per outcome and use **Analyze holders** to scan beyond the first page. **All available** follows the public holder cursor up to 12,000 wallets per outcome. Each holder's detail shows aggregate position outcomes and the latest public fills. Resolved markets show residual balances today, while performance and market activity use the historical cutoff.
+
+Recent profitability groups the latest 20 decided market records. History reads up to 100 rows per lifecycle status and verifies direction against up to 40 official resolutions. The separate lifetime realized market P&L is reported directly by Polymarket where available. Similar markets reuse the Market precedents sample and verify the holder's observed side against official settlement. The directional ratio requires a verifiable public buy on one side before resolution.
+
+Trading activity tests six-hour directional turnover against the preceding 18 hours. A flag is a market-level observation based on sampled public trades. The optional **Review with Codex** uses at most 25 wallets per outcome, the market rules, and public sources to explain possible drivers and what to check next.
+
 ### Hosted review worker
 
 `review_server.py` listens on loopback port 4313. It runs Codex in a separate service account signed in with ChatGPT. Set `REVIEW_KEY_DIGEST_FILE` to a protected file containing the SHA-256 digest of a randomly generated 32-byte base64url access key without padding. Set `REVIEW_CODEX_BIN` if Codex is outside the service's path. The worker needs a writable state directory for hashed browser session tokens (`STATE_DIRECTORY`, with `CODEX_HOME` as the fallback). Proxy only `/api/reviews` over HTTPS, preserve the host and origin headers, and enable the hosted controls with the `data-review-enabled` attribute on `<body>` in the dashboard pages. Keep the access key and the Codex session files outside the source tree.

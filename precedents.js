@@ -173,6 +173,14 @@ function caseRow(row, horizons) {
   tags.append(el("span", row.reason));
   tags.dataset.condition = row.condition;
   if (traded.has(row.condition) || row.traded) tags.append(el("span", "You traded", "side"));
+  const holderPage = el("a", "Holders", "precedent-link");
+  const context = new URLSearchParams(location.search);
+  const destination = new URLSearchParams({market: row.slug, source: "precedents", from: report.target.slug, scope: report.scope});
+  if (context.has("catalog")) destination.set("catalog", context.get("catalog"));
+  if (context.has("source")) destination.set("return_source", context.get("source"));
+  holderPage.href = "/holders?" + destination;
+  holderPage.setAttribute("aria-label", "Holder analysis · " + row.title);
+  tags.append(holderPage);
   market.lastElementChild.append(tags);
   const outcome = el("span", row.outcome ? "Yes" : "No", row.outcome ? "side yes" : "side no");
   const resolution = el("div", null, "precedent-resolution");

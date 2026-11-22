@@ -494,6 +494,7 @@ const DashboardWidgets = (() => {
           <button type="button" class="secondary-button" id="activity-follow" hidden>Follow</button>
           <button type="button" class="secondary-button" id="activity-alert" hidden>Add alert</button>
           <a class="secondary-button button-link" id="activity-precedents" hidden>Compare with past markets</a>
+          <a class="secondary-button button-link" id="activity-holders" hidden>Holder analysis</a>
           <a class="secondary-button button-link activity-external" id="activity-polymarket" target="_blank" rel="noopener noreferrer">Open on Polymarket ↗</a>
           <p id="activity-watch-error" class="negative" role="alert"></p>
         </div>
@@ -588,6 +589,7 @@ const DashboardWidgets = (() => {
   function positionHeader(dialog, position, market, preview) {
     dialog.querySelector("#activity-market-title").textContent = position.title || "Unknown market";
     const compare = dialog.querySelector("#activity-precedents");
+    const holders = dialog.querySelector("#activity-holders");
     const closed = market?.settled || ["won", "lost", "settled"].includes(position.status);
     DashboardWatchlist.mountActions(dialog.querySelector("#activity-follow"), dialog.querySelector("#activity-alert"),
       dialog.querySelector("#activity-watch-error"), {...position, ...preview, state: preview?.state || (closed ? "closed" : undefined)});
@@ -595,6 +597,16 @@ const DashboardWidgets = (() => {
     compare.hidden = !/^[a-z0-9][a-z0-9-]{0,250}$/.test(position.slug || "") ||
       preview?.compare === false || Boolean(position.is_combo || namedOutcome);
     compare.onclick = compare.hidden ? null : preview?.onCompare || null;
+    holders.hidden = !/^[a-z0-9][a-z0-9-]{0,250}$/.test(position.slug || "") || Boolean(position.is_combo);
+    if (holders.hidden) holders.removeAttribute("href");
+    else {
+      const params = new URLSearchParams({market: position.slug});
+      if (preview?.catalog_query !== undefined) params.set("catalog", preview.catalog_query);
+      else if (location.pathname === "/trades") params.set("source", "trades");
+      else if (location.pathname === "/") params.set("source", "portfolio");
+      holders.href = "/holders?" + params;
+    }
+    holders.onclick = holders.hidden ? null : preview?.onCompare || null;
     if (compare.hidden) compare.removeAttribute("href");
     else {
       const destination = {market: position.slug};

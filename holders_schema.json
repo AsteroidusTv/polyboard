@@ -1,0 +1,24 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "verdict": {"type": "string", "enum": ["Worth monitoring", "Wait for evidence", "Weak signal"]},
+    "summary": {"type": "string"},
+    "alternative": {"type": "string"},
+    "next_check": {"type": "string"},
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "title": {"type": "string"},
+          "url": {"type": "string"},
+          "date": {"type": "string"}
+        },
+        "required": ["title", "url", "date"]
+      }
+    }
+  },
+  "required": ["verdict", "summary", "alternative", "next_check", "sources"]
+}
