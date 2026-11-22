@@ -349,7 +349,7 @@
     heading.style.left = labelX;
     heading.style.maxWidth = maxWidth;
     const children = [shade, guide, heading];
-    let next = 29;
+    let next = 34;
     const summaries = [];
     for (const [index, quote] of quotes.entries()) {
       const dot = node("span", undefined, "event-cursor-dot");
