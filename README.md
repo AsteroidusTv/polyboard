@@ -36,7 +36,7 @@ The overview reports gross gains and gross losses across closed positions. **Win
 
 ## Charts
 
-The portfolio chart shows cumulative realized and unrealized position P&L reported by Polymarket. Select a market title in the portfolio or trade history to see the entire available price series for that outcome with buy and sell markers. For a closed position, the shaded area shows the market after the last sale when later prices are available. Markets without a public price series display execution markers when available. Use the range buttons, pointer, or arrow keys to inspect the chart.
+The portfolio chart shows cumulative realized and unrealized position P&L reported by Polymarket. Select a market title in the portfolio or trade history to see the available price series for that outcome with buy and sell markers. For a closed position, the shaded area shows the market after the last sale when later prices are available. A price history chart needs at least two observations at different times. Use the range buttons, pointer, or arrow keys to inspect the chart.
 
 ## Market precedents
 

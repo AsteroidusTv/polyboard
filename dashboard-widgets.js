@@ -562,7 +562,7 @@ const DashboardWidgets = (() => {
       .filter(([kind]) => kind === "line" ? points.length : markers.some((marker) => marker.kind === kind));
     const comparison = after && `Last sell ${formatPrice(lastSell.value)} · ${settled ? "Settlement" : "Latest"} ${formatPrice(last[1])}`;
     return {points, markers, after, legend,
-      subtitle: last ? comparison || "" : "Execution prices",
+      subtitle: comparison || "",
       note: after ? "Shaded area shows the market after your last sale." : ""};
   }
 
@@ -670,17 +670,19 @@ const DashboardWidgets = (() => {
     const request = new AbortController();
     detailRequest = request;
     const {dialog, panel} = detail;
+    const heading = preview ? (preview.outcomes?.[0]?.label || "Yes") + " price history" : undefined;
+    const emptyHistory = {heading, points: [], markers: []};
     positionHeader(dialog, position, null, preview);
     positionLink(dialog, position, preview, request.signal);
     dialog.querySelector("#activity-transactions").hidden = Boolean(preview);
     let history = [...(position.executions || [])].sort((a, b) => b.timestamp - a.timestamp);
     if (!preview) transactions(dialog, history, wallet ? "Loading transactions…" : "");
-    panel.show("Loading market prices…");
+    panel.show("Loading market prices…", emptyHistory);
     if (!dialog.open) dialog.showModal();
     dialog.querySelector("#activity-body").scrollTop = 0;
 
     if (preview && !/^\d{1,78}$/.test(position.token_id || "")) {
-      panel.show("Price history is unavailable for this market.");
+      panel.show("Price history unavailable", emptyHistory);
       return;
     }
 
@@ -701,19 +703,23 @@ const DashboardWidgets = (() => {
     } else if (wallet && Array.isArray(market.executions) && (market.executions.length || !history.length)) {
       history = market.executions.sort((a, b) => b.timestamp - a.timestamp);
     }
-    if (!preview) transactions(dialog, history, wallet && !market.executions ? "Transactions couldn’t load for this market." : "", true);
-    market.points = market.points.filter(([, value]) => Number.isFinite(value) && value >= 0 && value <= 1);
+    market.points = (Array.isArray(market.points) ? market.points : []).filter((point) =>
+      Array.isArray(point) && validChartTime(point[0]) && Number.isFinite(point[1]) && point[1] >= 0 && point[1] <= 1);
+    const hasHistory = !market.price_error && market.points.length >= 2 && market.points[0][0] < market.points.at(-1)[0];
+    if (!preview) transactions(dialog, history, wallet && !market.executions ? "Transactions couldn’t load for this market." : "", hasHistory);
     if (fullPosition) {
       positionHeader(dialog, position, market);
       positionLink(dialog, position, preview, request.signal);
     }
     else if (!preview) positionHeader(dialog, position, market);
+    if (!hasHistory) {
+      panel.show("Price history unavailable", emptyHistory);
+      return;
+    }
     const data = chartData(market.points, history, position, market.settled);
-    const message = market.price_error ? "Market prices couldn’t load." : market.points.length ? "" : "Polymarket has no market price series for this outcome.";
-    const outcome = preview?.outcomes?.[0]?.label || "Yes";
     const alertTarget = preview?.alert_target;
     if (Number.isFinite(alertTarget)) data.legend.push(["alert", "Alert threshold " + formatPrice(alertTarget)]);
-    panel.show(message, preview ? {...data, heading: outcome + " price history", alertTarget} : data);
+    panel.show("", preview ? {...data, heading, alertTarget} : data);
     if (fill) {
       const candidates = history.map((item, index) => ({item, index})).filter(({item}) =>
         item.type === "TRADE" && item.timestamp === fill.timestamp && item.side === fill.side &&
