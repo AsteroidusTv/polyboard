@@ -23,6 +23,8 @@
   const eventHistoryStatus = byId("event-history-status");
   const grid = byId("catalog-grid");
   const more = byId("catalog-more");
+  const moreLabel = byId("catalog-more-label");
+  const moreLoader = byId("catalog-more-loader");
   const pagination = byId("catalog-pagination");
   const moreStatus = byId("catalog-more-status");
   const pane = byId("catalog-pane");
@@ -449,15 +451,16 @@
     status.textContent = count ? `${count} ${count === 1 ? "event" : "events"} shown` : "";
     byId("catalog-empty").hidden = Boolean(count || cursor);
     if (!count && cursor) status.textContent = "No matching markets found yet.";
-    pagination.hidden = entries.size <= limit && !cursor;
+    more.hidden = entries.size <= limit && !cursor;
+    if (!more.hidden) pagination.hidden = false;
   }
 
   function observeMoreMarkets() {
-    observeMarketScroll(!pagination.hidden && !pane.hidden && !request && !moreStatus.textContent && sparsePages < 3);
+    observeMarketScroll(!more.hidden && !pane.hidden && !request && !moreStatus.textContent && sparsePages < 3);
   }
 
   function appendMarkets() {
-    if (request || pagination.hidden || pane.hidden) return;
+    if (request || more.hidden || pane.hidden) return;
     if (entries.size <= limit) {
       load(false);
     } else {
@@ -493,6 +496,9 @@
       sparsePages = 0;
       renderControls();
       byId("catalog-empty").hidden = pagination.hidden = true;
+      more.hidden = true;
+      moreLabel.textContent = "Load more";
+      moreLoader.hidden = true;
       grid.replaceChildren(...Array.from({length: 6}, () => {
         const card = node("div", undefined, "market-event-card market-skeleton");
         card.setAttribute("aria-hidden", "true");
@@ -503,8 +509,12 @@
     const controller = new AbortController();
     request = controller;
     grid.setAttribute("aria-busy", "true");
-    more.disabled = true;
-    more.textContent = reset ? "Load more" : "Loading…";
+    more.setAttribute("aria-disabled", "true");
+    const loading = reset ? null : setTimeout(() => {
+      if (request !== controller) return;
+      moreLabel.textContent = "Loading";
+      moreLoader.hidden = false;
+    }, 120);
     moreStatus.textContent = "";
     error.hidden = true;
     if (reset) status.textContent = "Loading markets…";
@@ -546,11 +556,13 @@
         moreStatus.textContent = message;
       }
     } finally {
+      clearTimeout(loading);
       if (request === controller) {
         request = null;
         grid.setAttribute("aria-busy", "false");
-        more.disabled = false;
-        more.textContent = moreStatus.textContent ? "Try again" : "Load more";
+        more.removeAttribute("aria-disabled");
+        moreLoader.hidden = true;
+        moreLabel.textContent = moreStatus.textContent ? "Try again" : "Load more";
         observeMoreMarkets();
       }
     }

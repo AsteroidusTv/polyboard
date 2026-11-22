@@ -40,6 +40,11 @@
 #catalog-status { min-height: 1.25em; margin-top: 2px; font-size: .78rem; }
 .market-sort { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--muted); font-size: .79rem; }
 .market-sort select { min-height: 36px; color: #dde3f0; }
+#catalog-pagination { min-height: 44px; }
+#catalog-more { display: inline-flex; justify-content: center; align-items: center; gap: 7px; width: 136px; }
+#catalog-more span { margin: 0; }
+#catalog-more[aria-disabled="true"] { background: #1b2335; color: var(--muted); cursor: wait; }
+#catalog-more[aria-disabled="true"]:active { transform: none; }
 .market-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 255px), 1fr)); gap: 11px; }
 .market-event-card {
   position: relative;
