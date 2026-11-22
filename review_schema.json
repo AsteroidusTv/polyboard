@@ -1,0 +1,96 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "summary": {
+      "type": "string"
+    },
+    "priorities": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "watchlist": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "holdings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "token_id": {
+            "type": "string"
+          },
+          "stance": {
+            "type": "string",
+            "enum": [
+              "Hold",
+              "Monitor",
+              "Consider reducing",
+              "Consider exiting",
+              "Insufficient evidence"
+            ]
+          },
+          "price_context": {
+            "type": "string"
+          },
+          "case_against": {
+            "type": "string"
+          },
+          "counterargument": {
+            "type": "string"
+          },
+          "trigger": {
+            "type": "string"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "title": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "title",
+                "url"
+              ]
+            }
+          }
+        },
+        "required": [
+          "token_id",
+          "stance",
+          "price_context",
+          "case_against",
+          "counterargument",
+          "trigger",
+          "sources"
+        ]
+      }
+    },
+    "history_insights": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "summary",
+    "priorities",
+    "watchlist",
+    "holdings",
+    "history_insights"
+  ]
+}

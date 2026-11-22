@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Market precedents · Polymarket</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/watchlist.css">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <script src="/charts.js" defer></script>
+  <script src="/dashboard-widgets.js" defer></script>
+  <script src="/dashboard-settings.js" defer></script>
+  <script src="/watchlist.js" defer></script>
+  <script src="/risk-check.js" defer></script>
+  <script src="/precedents.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <a class="back-link" href="/">← Portfolio</a>
+      <div class="page-title">
+        <h1>Market precedents</h1>
+        <div class="dashboard-actions">
+          <button type="button" class="secondary-button toolbar-button watch-bell" data-watch-bell aria-label="Notifications" aria-haspopup="dialog"></button>
+          <button type="button" class="secondary-button toolbar-button" data-open-settings aria-haspopup="dialog" aria-controls="settings-dialog"><span class="settings-icon" aria-hidden="true">⚙︎</span> Settings</button>
+        </div>
+      </div>
+    </header>
+    <p id="precedent-status" class="sr-only" role="status"></p>
+    <div id="precedent-error" class="empty negative" role="alert" hidden></div>
+    <div id="precedent-loading" class="precedent-loading muted" aria-hidden="true" hidden>
+      <span class="precedent-spinner"></span>
+      <span id="precedent-loading-message"></span>
+    </div>
+    <section id="precedent-results" aria-labelledby="precedent-name" hidden>
+      <div class="precedent-target">
+        <div class="precedent-target-main">
+          <div id="precedent-target-identity"></div>
+          <div class="precedent-target-links">
+            <a id="precedent-target-link" class="precedent-link" target="_blank" rel="noopener">View on Polymarket ↗</a>
+            <div class="info-control" id="precedent-rules-control" hidden>
+              <button id="precedent-rules-trigger" class="info-trigger" type="button" data-info-trigger aria-expanded="false" aria-controls="precedent-rules">Resolution rules</button>
+              <div class="info-bubble" id="precedent-rules" hidden>
+                <p id="precedent-rules-text"></p>
+                <a id="precedent-rules-source" class="precedent-link" target="_blank" rel="noopener">Full rules on Polymarket ↗</a>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="precedent-actions">
+          <div class="chart-ranges precedent-scope" id="precedent-scope" role="group" aria-label="Comparison scope">
+            <button type="button" data-scope="focused" aria-pressed="true">Same family</button>
+            <button type="button" data-scope="broad" aria-pressed="false">Broader</button>
+          </div>
+          <button id="risk-toggle" type="button" class="secondary-button" aria-haspopup="dialog" aria-controls="risk-dialog" hidden>Risk check</button>
+        </div>
+      </div>
+      <dl id="precedent-market-context" class="precedent-market-context" aria-label="Selected market details"></dl>
+      <div id="precedent-verdict" class="precedent-verdict" role="status" hidden></div>
+      <div id="precedent-details" hidden>
+        <div class="section-heading">
+          <div>
+            <h2 id="precedent-cases-title">Past market accuracy</h2>
+            <p id="precedent-count" class="muted"></p>
+          </div>
+          <div id="history-method" class="info-control">
+            <button type="button" class="info-trigger" data-info-trigger aria-expanded="false" aria-controls="precedent-help"><span aria-hidden="true">ⓘ</span> Method</button>
+            <p class="info-bubble" id="precedent-help" hidden>Horizons follow the scheduled market duration. D means days, H hours, M minutes and S seconds before official Polymarket resolution. Above 50%, Yes is favored. Below 50%, No is favored. A 50% price has no favorite. The signed gap is the final Yes value minus the historical Yes price. Each quote must come from a complete observation before the cutoff and be recent for that horizon. Average error and calibration require five markets across three events.</p>
+          </div>
+        </div>
+        <div class="precedent-table-wrap">
+          <table id="precedent-table" aria-labelledby="precedent-cases-title">
+            <colgroup><col class="precedent-market-column"><col class="precedent-outcome-column"><col id="precedent-horizon-columns" span="4"></colgroup>
+            <thead id="precedent-head"></thead>
+            <tbody id="precedent-rows"></tbody>
+          </table>
+        </div>
+        <section id="precedent-calibration" aria-labelledby="precedent-calibration-title" hidden>
+          <div class="section-heading">
+            <div class="calibration-heading">
+              <h2 id="precedent-calibration-title">Price calibration</h2>
+              <div class="info-control">
+                <button type="button" class="info-trigger" data-info-trigger aria-label="How to read price calibration" aria-expanded="false" aria-controls="calibration-help">ⓘ</button>
+                <p class="info-bubble" id="calibration-help" hidden>At the selected horizon, markets are grouped by their historical Yes price. Compare each group’s average Yes price with how often Yes actually won. Brier skill measures the relative change in squared forecast error versus always predicting 50%. Small samples can show large gaps by chance.</p>
+              </div>
+            </div>
+            <select id="precedent-calibration-horizon" aria-label="Calibration horizon"></select>
+          </div>
+          <div id="precedent-bands"></div>
+        </section>
+      </div>
+      <p id="precedent-coverage" class="muted"></p>
+    </section>
+    <dialog id="risk-dialog" aria-labelledby="risk-title">
+      <header class="review-heading">
+        <div><h2 id="risk-title">Risk check</h2><p class="muted" id="risk-market"></p></div>
+        <form method="dialog"><button type="submit" class="text-button activity-dismiss" aria-label="Close risk check" autofocus>×</button></form>
+      </header>
+      <div class="review-body">
+        <div class="codex-status-line">
+          <p id="risk-status" class="muted" role="status"></p>
+          <span id="risk-progress" class="codex-loading-dots" aria-hidden="true" hidden><span></span><span></span><span></span></span>
+        </div>
+        <div id="risk-report" hidden>
+          <div class="risk-recommendation">
+            <h3 id="risk-action"></h3><span id="risk-level" class="side"></span>
+            <p id="risk-rationale"></p>
+          </div>
+          <dl class="risk-details">
+            <div><dt>Main risk</dt><dd id="risk-main"></dd></div>
+            <div><dt>Recheck when</dt><dd id="risk-recheck"></dd></div>
+          </dl>
+          <p id="risk-time" class="muted"></p>
+          <div id="risk-sources" class="risk-sources" aria-label="Sources"></div>
+        </div>
+        <div class="risk-controls">
+          <button id="risk-run" type="button" hidden>Run risk check</button>
+          <button id="risk-connect" type="button" class="secondary-button" hidden>Connect Codex</button>
+        </div>
+      </div>
+    </dialog>
+  </main>
+</body>
+</html>

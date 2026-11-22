@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>New trade · Polymarket dashboard</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/markets.css">
+  <link rel="stylesheet" href="/watchlist.css">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <script src="/charts.js" defer></script>
+  <script src="/dashboard-widgets.js" defer></script>
+  <script src="/dashboard-settings.js" defer></script>
+  <script src="/watchlist.js" defer></script>
+  <script src="/markets.js" defer></script>
+</head>
+<body>
+  <main class="dashboard-page market-browser">
+    <header>
+      <nav class="dashboard-nav" aria-label="Dashboard">
+        <a href="/">Portfolio</a>
+        <a href="/markets" aria-current="page">New trade</a>
+        <a href="/trades">Trade history</a>
+      </nav>
+      <div class="page-title">
+        <h1>New trade</h1>
+        <div class="dashboard-actions">
+          <a class="secondary-button button-link" id="catalog-personalized" href="/?find=1" hidden>Personalized picks</a>
+          <button type="button" class="secondary-button toolbar-button watch-bell" data-watch-bell aria-label="Notifications" aria-haspopup="dialog"></button>
+          <button type="button" class="secondary-button toolbar-button" data-open-settings aria-haspopup="dialog" aria-controls="settings-dialog">Settings</button>
+        </div>
+      </div>
+    </header>
+
+    <nav class="history-tabs watch-tabs" aria-label="New trade views">
+      <a href="/markets" data-market-view="explore" aria-current="page">Explore</a>
+      <a href="/markets#watchlist" data-market-view="watchlist">Watchlist</a>
+    </nav>
+
+    <div id="catalog-pane">
+      <div class="market-toolbar">
+        <form id="catalog-search" role="search">
+          <label class="sr-only" for="catalog-query">Search Polymarket</label>
+          <input id="catalog-query" type="search" placeholder="Title or Polymarket link" maxlength="700">
+          <button type="submit">Search</button>
+        </form>
+        <button id="catalog-filters" class="secondary-button" type="button" aria-haspopup="dialog" aria-controls="catalog-filter-dialog">Filters</button>
+      </div>
+      <div id="catalog-categories" class="market-categories" role="group" aria-label="Market category"></div>
+      <div id="catalog-active-filters" class="market-active-filters" aria-label="Active filters" hidden></div>
+
+      <section id="catalog-results" aria-labelledby="catalog-heading">
+        <div class="market-results-heading">
+          <div>
+            <h2 id="catalog-heading">Trending markets</h2>
+            <p id="catalog-status" class="muted" role="status"></p>
+          </div>
+          <label class="market-sort" for="catalog-sort">Sort by
+            <select id="catalog-sort">
+              <option value="auto">Default order</option>
+              <option value="trending">24h activity</option>
+              <option value="new">Newest</option>
+              <option value="ending">Ending soon</option>
+              <option value="liquidity">Most liquid</option>
+              <option value="volume">Total volume</option>
+            </select>
+          </label>
+        </div>
+        <div id="catalog-error" class="empty market-error" role="alert" hidden>
+          <p></p><button id="catalog-retry" class="secondary-button" type="button">Try again</button>
+        </div>
+        <div id="catalog-grid" class="market-grid" aria-busy="true"></div>
+        <div id="catalog-empty" class="empty" hidden>
+          <p>No open markets match these filters.</p>
+        </div>
+        <div class="scroll-pagination" id="catalog-pagination" hidden>
+          <p id="catalog-more-status" role="status"></p>
+          <button type="button" class="secondary-button" id="catalog-more">Load more</button>
+        </div>
+      </section>
+    </div>
+
+    <section id="watchlist-pane" aria-labelledby="watchlist-title" hidden>
+      <div class="section-heading">
+        <h2 id="watchlist-title">Watchlist</h2>
+        <p class="muted" id="watchlist-count"></p>
+      </div>
+      <div id="watchlist-status" class="muted" role="status"></div>
+      <div id="watchlist-cards" class="watch-grid"></div>
+    </section>
+
+    <dialog id="catalog-filter-dialog" class="market-dialog" aria-labelledby="market-filter-title">
+      <div class="market-dialog-head">
+        <h2 id="market-filter-title">Filters</h2>
+        <form method="dialog"><button class="text-button activity-dismiss" aria-label="Close filters" autofocus>×</button></form>
+      </div>
+      <form id="catalog-filter-form">
+        <div class="market-dialog-scroll">
+          <fieldset>
+            <legend>Indicative odds</legend>
+            <div class="market-filter-grid">
+              <div>
+                <label for="catalog-side">Outcome</label>
+                <select id="catalog-side"><option value="yes">Yes</option><option value="no">No</option></select>
+              </div>
+              <div>
+                <label for="catalog-band">Price range</label>
+                <select id="catalog-band"><option value="">Any price</option></select>
+              </div>
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend>Scheduled end</legend>
+            <label class="sr-only" for="catalog-ends">Scheduled end</label>
+            <select id="catalog-ends">
+              <option value="">Any date</option>
+              <option value="1">Next 24 hours</option>
+              <option value="7">Next 7 days</option>
+              <option value="30">Next 30 days</option>
+              <option value="90">Next 90 days</option>
+              <option value="custom">Custom dates</option>
+            </select>
+            <div id="catalog-custom-dates" class="market-filter-grid" hidden>
+              <div><label for="catalog-from">From</label><input id="catalog-from" type="date"></div>
+              <div><label for="catalog-through">Through</label><input id="catalog-through" type="date"></div>
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend>Liquidity and spread</legend>
+            <div class="market-filter-grid">
+              <div>
+                <label for="catalog-liquidity">Minimum liquidity</label>
+                <select id="catalog-liquidity">
+                  <option value="">Any liquidity</option><option value="1000">$1k</option>
+                  <option value="10000">$10k</option><option value="50000">$50k</option>
+                </select>
+              </div>
+              <div>
+                <label for="catalog-spread">Maximum spread</label>
+                <select id="catalog-spread">
+                  <option value="">Any spread</option><option value="1">1¢</option>
+                  <option value="3">3¢</option><option value="5">5¢</option><option value="10">10¢</option>
+                </select>
+              </div>
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend>Exclude categories</legend>
+            <div id="catalog-exclude" class="market-exclusions"></div>
+          </fieldset>
+          <p id="catalog-filter-error" class="negative" role="alert" hidden></p>
+        </div>
+        <div class="market-dialog-actions">
+          <button type="button" class="text-button" id="catalog-reset">Reset filters</button>
+          <button type="submit">Apply filters</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="catalog-event-dialog" class="market-dialog market-event-dialog" aria-labelledby="catalog-event-title">
+      <header class="market-dialog-head event-overview-head">
+        <div class="event-overview-identity">
+          <div class="event-overview-art" id="catalog-event-art" hidden></div>
+          <div>
+            <p class="event-overview-category muted" id="catalog-event-category" hidden></p>
+            <h2 id="catalog-event-title"></h2>
+          </div>
+        </div>
+        <form method="dialog"><button class="text-button activity-dismiss" aria-label="Close event" autofocus>×</button></form>
+      </header>
+      <div class="market-dialog-scroll event-overview-scroll">
+        <div class="event-overview-meta">
+          <p id="catalog-event-stats" class="muted"></p>
+          <a class="secondary-button button-link" id="catalog-event-link" target="_blank" rel="noopener noreferrer">Open on Polymarket ↗</a>
+        </div>
+        <section class="event-history" aria-labelledby="event-history-title">
+          <div class="event-history-head">
+            <h3 id="event-history-title">Price history</h3>
+            <div class="chart-ranges" id="event-history-ranges" role="group" aria-label="Event price history range" hidden>
+              <button type="button" data-days="1" aria-pressed="false">1D</button>
+              <button type="button" data-days="7" aria-pressed="false">1W</button>
+              <button type="button" data-days="30" aria-pressed="true">1M</button>
+              <button type="button" data-days="0" aria-pressed="false">All</button>
+            </div>
+          </div>
+          <div class="event-history-legend" id="event-history-legend" role="group" aria-label="Chart markets" hidden></div>
+          <div class="event-history-plot">
+            <p class="event-history-status muted" id="event-history-status" role="status"></p>
+            <canvas id="event-history-chart" role="img" aria-labelledby="event-history-title" hidden></canvas>
+          </div>
+        </section>
+        <section class="event-market-list" aria-labelledby="event-market-title">
+          <div class="event-market-head">
+            <h3 id="event-market-title">Markets <span class="event-market-count muted" id="catalog-event-count"></span></h3>
+            <input id="catalog-event-search" type="search" aria-label="Filter markets in this event" placeholder="Filter markets" hidden>
+          </div>
+          <div id="catalog-event-list"></div>
+        </section>
+      </div>
+    </dialog>
+  </main>
+</body>
+</html>

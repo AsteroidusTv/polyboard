@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Trade history · Polymarket</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/watchlist.css">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <script src="/charts.js" defer></script>
+  <script src="/dashboard-widgets.js" defer></script>
+  <script src="/dashboard-settings.js" defer></script>
+  <script src="/watchlist.js" defer></script>
+  <script src="/trades.js" defer></script>
+</head>
+<body>
+  <main class="dashboard-page">
+    <header>
+      <nav class="dashboard-nav" aria-label="Dashboard">
+        <a href="/">Portfolio</a>
+        <a href="/markets">New trade</a>
+        <a href="/trades" aria-current="page">Trade history</a>
+      </nav>
+      <div class="page-title">
+        <h1>Trade history</h1>
+        <div class="dashboard-actions">
+          <button type="button" class="secondary-button toolbar-button" id="refresh"><span class="refresh-icon" aria-hidden="true">↻</span> Refresh</button>
+          <button type="button" class="secondary-button toolbar-button watch-bell" data-watch-bell aria-label="Notifications" aria-haspopup="dialog"></button>
+          <button type="button" class="secondary-button toolbar-button" data-open-settings aria-haspopup="dialog" aria-controls="settings-dialog"><span class="settings-icon" aria-hidden="true">⚙︎</span> Settings</button>
+        </div>
+      </div>
+    </header>
+
+    <section aria-label="Trades">
+      <div class="history-tabs" role="group" aria-label="History view">
+        <button class="secondary-button" type="button" id="view-positions" aria-pressed="true">Positions</button>
+        <button class="secondary-button" type="button" id="view-executions" aria-pressed="false">Executions</button>
+      </div>
+      <p id="error" role="alert" hidden></p>
+      <div id="wallet-empty" class="empty wallet-empty" hidden>
+        <p>Add a public wallet address to load its trades.</p>
+        <button type="button" data-open-settings aria-haspopup="dialog" aria-controls="settings-dialog">Set wallet</button>
+      </div>
+      <p id="trade-loading" class="muted" role="status" hidden></p>
+      <div id="trade-results" hidden>
+        <dl class="history-overview" id="history-overview">
+          <div><dt>Closed net P&amp;L</dt><dd id="history-pnl">—</dd></div>
+          <div><dt>Gross gains</dt><dd id="history-gains" class="positive">—</dd></div>
+          <div><dt>Gross losses</dt><dd id="history-losses" class="negative">—</dd></div>
+          <div><dt>Win rate</dt><dd id="history-win-rate">—</dd><dd id="history-record" class="history-caption">—</dd></div>
+          <div><dt>Profit factor</dt><dd id="history-profit-factor">—</dd></div>
+          <div><dt>Open positions</dt><dd id="history-open">—</dd></div>
+        </dl>
+        <section id="history-fees" class="fee-summary" aria-labelledby="fee-heading" hidden>
+          <div class="fee-heading info-control">
+            <h2 id="fee-heading">Trading fees</h2>
+            <button type="button" class="info-trigger" data-info-trigger aria-label="Trading fee calculation" aria-expanded="false" aria-controls="fee-help">ⓘ</button>
+            <p class="info-bubble" id="fee-help" hidden>Lifetime wallet totals from Polymarket. Net paid is fees charged minus refunds. Trading rebates and costs charged by third parties are separate.</p>
+          </div>
+          <dl class="fee-totals">
+            <div><dt>Net paid</dt><dd id="fee-net">—</dd></div>
+            <div><dt>Charged</dt><dd id="fee-charged">—</dd></div>
+            <div><dt>Refunded</dt><dd id="fee-refunded">—</dd></div>
+          </dl>
+        </section>
+        <div class="trade-controls">
+          <div>
+            <label for="trade-search">Market</label>
+            <input id="trade-search" type="search" placeholder="Search by market name">
+          </div>
+          <div>
+            <label for="trade-side" id="history-filter-label">Status</label>
+            <select id="trade-side"></select>
+          </div>
+          <div>
+            <label for="trade-order">Sort by</label>
+            <select id="trade-order"></select>
+          </div>
+        </div>
+
+        <div class="history-meta">
+          <p id="trade-count" class="muted" role="status"></p>
+          <div id="history-method" class="info-control">
+            <button type="button" data-info-trigger class="info-trigger" aria-expanded="false" aria-controls="history-help"><span aria-hidden="true">ⓘ</span> P&amp;L calculation</button>
+            <p class="info-bubble" id="history-help" hidden>Gross gains and losses sum the positive and negative P&amp;L of closed positions. Profit factor divides gross gains by gross losses in absolute terms. Win rate counts wins among wins and losses. Net P&amp;L adds sales, payouts and any current or claimable value, then subtracts buy costs. The exit column shows the average sale price when available. Settlement is the payout per share held through resolution.</p>
+          </div>
+        </div>
+        <p id="no-matches" class="empty" hidden></p>
+        <table id="trade-table" aria-label="Trade history">
+          <colgroup id="trade-columns"></colgroup>
+          <thead>
+            <tr id="trade-headings"></tr>
+          </thead>
+          <tbody id="trade-rows"></tbody>
+        </table>
+        <div id="trade-pagination" class="scroll-pagination" hidden>
+          <button id="more-trades" class="secondary-button" type="button">Load more</button>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,25 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "action": {"type": "string", "enum": ["Wait", "Pass", "Consider Yes", "Consider No", "Hold", "Reduce", "Exit"]},
+    "risk": {"type": "string", "enum": ["Low", "Moderate", "High", "Unclear"]},
+    "rationale": {"type": "string", "maxLength": 160},
+    "main_risk": {"type": "string", "maxLength": 160},
+    "recheck": {"type": "string", "maxLength": 160},
+    "sources": {
+      "type": "array",
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "title": {"type": "string", "maxLength": 45},
+          "url": {"type": "string"}
+        },
+        "required": ["title", "url"]
+      }
+    }
+  },
+  "required": ["action", "risk", "rationale", "main_risk", "recheck", "sources"]
+}

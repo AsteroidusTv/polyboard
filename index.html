@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Portfolio · Polymarket</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/watchlist.css">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <script src="/charts.js" defer></script>
+  <script src="/dashboard-widgets.js" defer></script>
+  <script src="/dashboard-settings.js" defer></script>
+  <script src="/watchlist.js" defer></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="page-title">
+        <h1>Portfolio</h1>
+        <div class="dashboard-actions">
+          <a class="secondary-button button-link" href="/markets">New trade</a>
+          <a class="secondary-button button-link" href="/trades">Show all trades</a>
+          <button type="button" class="secondary-button toolbar-button" id="refresh"><span class="refresh-icon" aria-hidden="true">↻</span> Refresh</button>
+          <button type="button" class="secondary-button toolbar-button watch-bell" data-watch-bell aria-label="Notifications" aria-haspopup="dialog"></button>
+          <button type="button" class="secondary-button toolbar-button" data-open-settings aria-haspopup="dialog" aria-controls="settings-dialog"><span class="settings-icon" aria-hidden="true">⚙︎</span> Settings</button>
+        </div>
+      </div>
+    </header>
+
+    <dl id="totals" hidden>
+      <div><dt>Cost basis</dt><dd id="total-cost"></dd></div>
+      <div><dt>Current value</dt><dd id="total-value"></dd></div>
+      <div><dt>Unrealized P&L</dt><dd id="total-pnl"></dd></div>
+    </dl>
+    <section id="portfolio-chart" class="portfolio-chart" aria-label="Portfolio performance" hidden></section>
+    <section aria-labelledby="positions-heading">
+      <div class="section-heading">
+        <div class="positions-title">
+          <h2 id="positions-heading">Open positions <span id="count" hidden></span></h2>
+          <div id="positions-info" class="info-control" hidden>
+            <button type="button" class="info-trigger" data-info-trigger aria-label="Payout and price units" aria-expanded="false" aria-controls="positions-help">ⓘ</button>
+            <p class="info-bubble" id="positions-help" hidden>Potential payout is the gross amount if the held outcome wins. Prices are in cents per share. Amounts are in dollars.</p>
+          </div>
+        </div>
+        <div class="section-actions">
+          <p id="status" class="muted" role="status" aria-atomic="true"></p>
+          <button type="button" id="scenario-toggle" class="secondary-button" aria-expanded="false" aria-controls="scenario-tools scenario-summary" hidden>Simulate outcomes</button>
+          <button type="button" id="review-toggle" class="secondary-button" aria-haspopup="dialog" hidden>Run review</button>
+          <button type="button" id="find-toggle" class="secondary-button" aria-haspopup="dialog" hidden>Find markets</button>
+        </div>
+      </div>
+      <p id="error" role="alert" hidden></p>
+      <div id="wallet-empty" class="empty wallet-empty" hidden>
+        <p>Add a public wallet address to load its portfolio.</p>
+        <button type="button" data-open-settings aria-haspopup="dialog" aria-controls="settings-dialog">Set wallet</button>
+      </div>
+      <p id="empty" class="empty" hidden>No open positions for this wallet.</p>
+      <div id="results" hidden>
+        <div id="scenario-tools" hidden>
+          <h3>Resolution scenario</h3>
+          <p id="scenario-help" class="muted">Check the positions whose held side wins. Each winning share pays $1.</p>
+          <div class="scenario-options">
+            <span id="scenario-others-label">Unchecked positions</span>
+            <div class="chart-ranges scenario-modes" role="group" aria-labelledby="scenario-others-label">
+              <button type="button" data-scenario-other="current" aria-pressed="true">Sell at current value</button>
+              <button type="button" data-scenario-other="zero" aria-pressed="false">Value at $0</button>
+              <button type="button" data-scenario-other="exclude" aria-pressed="false">Exclude</button>
+            </div>
+            <button type="button" id="scenario-clear" class="text-button" disabled>Clear selection</button>
+          </div>
+        </div>
+        <div id="scenario-summary" hidden>
+          <div id="scenario-values" class="scenario-values" role="status" aria-atomic="true">
+            <div class="scenario-scope">
+              <p id="scenario-count"></p>
+              <p id="scenario-scope" class="muted"></p>
+              <p id="scenario-exit-note" class="muted">Estimate at displayed prices, before selling fees and slippage.</p>
+            </div>
+            <dl>
+              <div><dt id="scenario-value-label">Projected portfolio</dt><dd id="scenario-value"></dd></div>
+              <div><dt id="scenario-change-label">vs. current value</dt><dd id="scenario-change"></dd></div>
+              <div><dt>Net P&amp;L</dt><dd id="scenario-pnl"></dd></div>
+            </dl>
+          </div>
+          <p id="scenario-conflict" role="alert" hidden></p>
+        </div>
+        <div class="mobile-sort">
+          <label for="position-sort">Sort by</label>
+          <select id="position-sort">
+            <option value="title">Market</option>
+            <option value="avg_price">Average price</option>
+            <option value="current_price">Current price</option>
+            <option value="entry_cost_usdc">Cost basis</option>
+            <option value="current_size">Potential payout</option>
+            <option value="current_value" selected>Current value</option>
+            <option value="unrealized_pnl">P&amp;L</option>
+          </select>
+          <button type="button" id="sort-direction" aria-label="Sort ascending" class="secondary-button">↓</button>
+        </div>
+        <table id="positions-table" aria-label="Open positions">
+          <colgroup><col><col><col><col><col></colgroup>
+          <thead>
+            <tr>
+              <th scope="col" aria-label="Market">
+                <button class="sort-button" type="button" data-sort-key="title" aria-pressed="false" aria-label="Sort by market">Market</button>
+              </th>
+              <th scope="col" aria-label="Average and current prices">
+                <span class="price-sort">
+                  <button class="sort-button" type="button" data-sort-key="avg_price" aria-pressed="false" aria-label="Sort by average price">Avg</button>
+                  <span aria-hidden="true">→</span>
+                  <button class="sort-button" type="button" data-sort-key="current_price" aria-pressed="false" aria-label="Sort by current price">Now</button>
+                </span>
+              </th>
+              <th scope="col" aria-label="Cost basis">
+                <button class="sort-button" type="button" data-sort-key="entry_cost_usdc" aria-pressed="false" aria-label="Sort by cost basis">Cost</button>
+              </th>
+              <th scope="col" aria-label="Potential payout">
+                <button class="sort-button" type="button" data-sort-key="current_size" aria-pressed="false" aria-label="Sort by potential payout">Payout</button>
+              </th>
+              <th scope="col" aria-label="Value and P&amp;L" aria-sort="descending">
+                <button class="sort-button" type="button" data-sort-key="current_value" aria-pressed="true" data-direction="descending" aria-label="Sort by current value">Value</button>
+                <span aria-hidden="true">&amp;</span>
+                <button class="sort-button" type="button" data-sort-key="unrealized_pnl" aria-pressed="false" aria-label="Sort by P&amp;L">P&amp;L</button>
+              </th>
+            </tr>
+          </thead>
+          <tbody id="positions"></tbody>
+        </table>
+      </div>
+    </section>
+    <dialog id="review-dialog" aria-labelledby="review-title" aria-describedby="review-help">
+      <div class="review-heading">
+        <h2 id="review-title">Portfolio review</h2>
+        <button id="review-dismiss" class="text-button" type="button" aria-label="Close review" autofocus>×</button>
+      </div>
+      <div id="review-body" class="review-body">
+        <p id="review-help" class="muted">Codex will check current prices and liquidity, challenge your positions, and rank what to watch or reconsider.</p>
+        <code id="review-wallet"></code>
+        <section id="review-direct">
+          <form id="review-form">
+            <button id="review-run" type="submit" hidden>Run review</button>
+            <button id="review-connect" type="button" class="secondary-button">Open Codex settings</button>
+          </form>
+          <div id="review-activity" hidden>
+            <div class="review-activity-header">
+              <div class="codex-status-line">
+                <p id="review-progress" role="status"></p>
+                <span id="review-meter" class="codex-loading-dots" aria-hidden="true" hidden><span></span><span></span><span></span></span>
+              </div>
+              <span id="review-elapsed" class="muted"></span>
+            </div>
+            <dl id="review-usage" hidden></dl>
+            <p id="review-usage-note" class="muted" hidden>Quota readings are account-wide and can include other Codex activity.</p>
+          </div>
+          <article id="review-report" hidden></article>
+        </section>
+      </div>
+    </dialog>
+  </main>
+</body>
+</html>
