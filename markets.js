@@ -18,6 +18,8 @@
   const eventDialog = byId("catalog-event-dialog");
   const eventSearch = byId("catalog-event-search");
   const eventCanvas = byId("event-history-chart");
+  const eventCursor = byId("event-history-cursor");
+  const eventAnnouncement = byId("event-history-announcement");
   const eventRangeControls = byId("event-history-ranges");
   const eventLegend = byId("event-history-legend");
   const eventHistoryStatus = byId("event-history-status");
@@ -36,6 +38,7 @@
   const percent = new Intl.NumberFormat("en-US", {style: "percent", maximumFractionDigits: 2});
   const dollars = new Intl.NumberFormat("en-US", {style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 1});
   const date = new Intl.DateTimeFormat("en-US", {dateStyle: "medium"});
+  const cursorDate = new Intl.DateTimeFormat("en-US", {month: "short", day: "numeric", hour: "numeric", minute: "2-digit"});
   const shortDate = new Intl.DateTimeFormat("en-US", {month: "short", day: "numeric"});
   const seriesColors = ["#acbbff", "#66dcbb", "#ffc17d", "#eb96ca"];
   const pageSize = 12;
@@ -49,6 +52,8 @@
   let eventSeries = [];
   let eventRange = 30;
   let eventRequest;
+  let eventPlot;
+  let eventCursorTime;
   let catalogLocation;
   let sparsePages = 0;
   const renderedCards = new Map();
@@ -302,7 +307,82 @@
 
   function drawEventHistory() {
     if (eventCanvas.hidden) return;
-    DashboardLineChart.drawComparison(eventCanvas, eventSeries.filter((series) => series.points.length >= 2), eventRange);
+    eventPlot = DashboardLineChart.drawComparison(eventCanvas, eventSeries.filter((series) => series.points.length >= 2), eventRange);
+    if (eventCursorTime !== undefined && eventPlot && eventCursorTime >= eventPlot.start && eventCursorTime <= eventPlot.end)
+      showEventCursor(eventCursorTime);
+    else clearEventCursor();
+  }
+
+  function eventSeriesName(market) {
+    const outcome = market.outcomes[0].label;
+    return shortOutcome(outcome) ? market.label
+      : market.title === selectedEvent.title ? outcome : market.label + " · " + outcome;
+  }
+
+  function clearEventCursor() {
+    eventCursorTime = undefined;
+    eventCursor.hidden = true;
+    eventAnnouncement.textContent = "";
+  }
+
+  function showEventCursor(timestamp, announce = false) {
+    const plot = eventPlot;
+    const quotes = plot.valuesAt(timestamp).sort((first, second) => first.y - second.y);
+    if (!quotes.length) return clearEventCursor();
+    eventCursorTime = timestamp;
+    const position = plot.x(timestamp);
+    const roomBefore = position;
+    const roomAfter = eventCanvas.clientWidth - position;
+    const left = roomAfter < 185 && roomBefore > roomAfter;
+    const labelX = (position + (left ? -9 : 9)) + "px";
+    const maxWidth = Math.min(225, (left ? roomBefore : roomAfter) - 12) + "px";
+    const shade = node("span", undefined, "event-cursor-future");
+    const guide = node("span", undefined, "event-cursor-guide");
+    for (const mark of [shade, guide]) {
+      mark.style.left = position + "px";
+      mark.style.top = plot.top + "px";
+      mark.style.height = (plot.bottom - plot.top) + "px";
+    }
+    shade.style.width = (plot.right - position) + "px";
+    const stamp = cursorDate.format(timestamp * 1000);
+    const heading = node("span", stamp, "event-cursor-time");
+    heading.style.left = labelX;
+    heading.style.maxWidth = maxWidth;
+    const children = [shade, guide, heading];
+    let next = 29;
+    const summaries = [];
+    for (const [index, quote] of quotes.entries()) {
+      const dot = node("span", undefined, "event-cursor-dot");
+      dot.dataset.series = quote.slot;
+      dot.style.left = position + "px";
+      dot.style.top = quote.y + "px";
+      const label = node("span", undefined, "event-cursor-quote");
+      label.dataset.series = quote.slot;
+      const name = eventSeriesName(quote.market);
+      const price = priceLabel(quote.price);
+      label.append(node("span", name), node("strong", price));
+      label.style.left = labelX;
+      label.style.maxWidth = maxWidth;
+      const labelY = Math.min(Math.max(next, quote.y), plot.bottom - 3 - (quotes.length - index - 1) * 23);
+      label.style.top = labelY + "px";
+      next = labelY + 23;
+      children.push(dot, label);
+      summaries.push(name + " " + price);
+    }
+    eventCursor.classList.toggle("is-left", left);
+    eventCursor.replaceChildren(...children);
+    eventCursor.hidden = false;
+    if (announce) eventAnnouncement.textContent = stamp + ". " + summaries.join(", ");
+  }
+
+  function inspectEventHistory(event) {
+    if (!eventPlot) return;
+    const plot = eventPlot;
+    const rect = eventCanvas.getBoundingClientRect();
+    const offset = event.clientX - rect.left;
+    if (offset < plot.left || offset > plot.right) return clearEventCursor();
+    const timestamp = plot.start + (plot.end - plot.start) * (offset - plot.left) / (plot.right - plot.left);
+    showEventCursor(timestamp, event.pointerType === "touch");
   }
 
   function renderEventHistory() {
@@ -320,9 +400,7 @@
     const focusedSeries = eventLegend.contains(document.activeElement) ? document.activeElement.dataset.series : undefined;
     eventLegend.replaceChildren(...available.map((series) => {
       const {market} = series;
-      const outcome = market.outcomes[0].label;
-      const name = shortOutcome(outcome) ? market.label
-        : market.title === selectedEvent.title ? outcome : market.label + " · " + outcome;
+      const name = eventSeriesName(market);
       const toggle = button(undefined, "event-series-toggle", () => {
         if (series.visible && available.filter((item) => item.visible).length === 1) return;
         series.visible = !series.visible;
@@ -341,6 +419,8 @@
 
   async function loadEventHistory(signal) {
     eventCanvas.hidden = eventLegend.hidden = eventRangeControls.hidden = true;
+    eventPlot = undefined;
+    clearEventCursor();
     eventHistoryStatus.textContent = "Loading price history…";
     eventHistoryStatus.dataset.loading = "";
     eventHistoryStatus.hidden = false;
@@ -656,6 +736,26 @@
   eventSearch.addEventListener("input", renderEventList);
   eventRetry.addEventListener("click", () => loadEventMarkets(selectedEvent, eventRequest.signal));
   eventDialog.addEventListener("close", () => { if (!eventDialog.open) eventRequest?.abort(); });
+  eventCanvas.addEventListener("pointermove", (event) => {
+    if (event.pointerType !== "touch") inspectEventHistory(event);
+  });
+  eventCanvas.addEventListener("pointerdown", inspectEventHistory);
+  eventCanvas.addEventListener("pointerleave", (event) => {
+    if (event.pointerType !== "touch") clearEventCursor();
+  });
+  eventCanvas.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !eventCursor.hidden) {
+      event.preventDefault();
+      clearEventCursor();
+    }
+    if (!eventPlot || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+    event.preventDefault();
+    const {start, end} = eventPlot;
+    const step = (end - start) / 24;
+    const time = (eventCursorTime ?? (start + end) / 2) + (event.key === "ArrowLeft" ? -step : step);
+    showEventCursor(Math.max(start, Math.min(end, time)), true);
+  });
+  eventCanvas.addEventListener("blur", clearEventCursor);
   eventRangeControls.addEventListener("click", (event) => {
     const control = event.target.closest("button[data-days]");
     if (!control) return;

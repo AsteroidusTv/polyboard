@@ -128,6 +128,14 @@ const DashboardLineChart = (() => {
         ctx.fillStyle = trace.color;
         ctx.fill();
       }
+      return {start, end: last, left, right, top, bottom, x,
+        valuesAt(time) {
+          return traces.flatMap((trace) => {
+            if (!trace.visible) return [];
+            const price = valueOnLine(trace.points, time);
+            return price === undefined ? [] : [{market: trace.market, slot: trace.slot, price, y: y(price)}];
+          });
+        }};
     }
 
     constructor(container, options) {

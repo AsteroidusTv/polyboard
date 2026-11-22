@@ -190,7 +190,10 @@
           <div class="event-history-legend" id="event-history-legend" role="group" aria-label="Chart markets" hidden></div>
           <div class="event-history-plot">
             <p class="event-history-status muted" id="event-history-status" role="status"></p>
-            <canvas id="event-history-chart" role="img" aria-labelledby="event-history-title" hidden></canvas>
+            <canvas id="event-history-chart" tabindex="0" role="img" aria-labelledby="event-history-title" aria-describedby="event-chart-help" hidden></canvas>
+            <span id="event-chart-help" class="sr-only">Use the left and right arrow keys to inspect prices. Values between observations are interpolated.</span>
+            <div id="event-history-cursor" class="event-history-cursor" aria-hidden="true" hidden></div>
+            <span id="event-history-announcement" class="sr-only" aria-live="polite"></span>
           </div>
         </section>
         <section class="event-market-list" aria-labelledby="event-market-title">

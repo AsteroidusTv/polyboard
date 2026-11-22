@@ -209,7 +209,41 @@
 .event-history [data-series="1"], .event-series-key[data-series="1"] { --series-color: #66dcbb; }
 .event-history [data-series="2"], .event-series-key[data-series="2"] { --series-color: #ffc17d; }
 .event-history [data-series="3"], .event-series-key[data-series="3"] { --series-color: #eb96ca; }
+.event-history-plot { position: relative; }
 .event-history-plot canvas { display: block; width: 100%; height: var(--event-plot-height); }
+.event-history-cursor { position: absolute; inset: 0; pointer-events: none; }
+.event-cursor-guide, .event-cursor-future, .event-cursor-dot, .event-cursor-time, .event-cursor-quote { position: absolute; }
+.event-cursor-future { background: #11172085; }
+.event-cursor-guide { border-left: 1px dashed #90a4cf; }
+.event-cursor-dot {
+  width: 8px;
+  height: 8px;
+  transform: translate(-50%, -50%);
+  border: 1px solid #111720;
+  border-radius: 50%;
+  background: var(--series-color);
+}
+.event-cursor-time, .event-cursor-quote {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 2px 6px;
+  border: 1px solid #374661;
+  border-radius: 5px;
+  background: #172031;
+  color: #edf1ff;
+  font-size: .74rem;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.event-cursor-time { top: 0; color: #c0cce4; overflow: hidden; text-overflow: ellipsis; display: block; }
+.event-cursor-quote { transform: translateY(-50%); }
+.event-history-cursor.is-left .event-cursor-time { transform: translateX(-100%); }
+.event-history-cursor.is-left .event-cursor-quote { transform: translate(-100%, -50%); }
+.event-cursor-quote::before { content: ""; width: 3px; height: 10px; flex: 0 0 3px; border-radius: 2px; background: var(--series-color); }
+.event-cursor-quote span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.event-cursor-quote strong { font-variant-numeric: tabular-nums; }
 .event-history-status { padding: 8px 0; font-size: .8rem; }
 .event-history-status[data-loading] { min-height: var(--event-plot-height); display: grid; place-items: center; }
 .event-market-list { margin: 0; }

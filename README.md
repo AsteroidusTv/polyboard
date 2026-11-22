@@ -74,7 +74,7 @@ While a review runs, the panel shows its current stage and elapsed time. At comp
 
 Open **New trade** or go to `/markets` to browse open markets without a wallet. **Trending** ranks events by 24-hour volume. Search by title or paste a Polymarket event or market link. Filters apply to individual markets, and events group the matches. Select a card to see its markets or open its sole market directly. The market detail shows price history and offers **Compare with past markets** where supported.
 
-The catalogue sends compact event previews and loads the complete filtered list when you open an event. The overview charts up to four markets and starts showing price history as soon as the first series is ready. Select a series in the legend to hide or show it, or open a row to inspect that market.
+The catalogue sends compact event previews and loads the complete filtered list when you open an event. The overview charts up to four markets and starts showing price history as soon as the first series is ready. Select a series in the legend to hide or show it, or open a row to inspect that market. Hover, tap, or use the arrow keys on the chart to compare prices at a specific time. Values between observations are interpolated.
 
 Use **Filters** to select a Yes or No price band, a scheduled end range, minimum liquidity, maximum spread, or categories to hide. Applied filters are saved in a browser cookie and shown as removable chips. Filter parameters in a shared URL take precedence. Catalogue and search results load more as you scroll, with a **Load more** button also available. The catalogue is read-only and uses the public [Polymarket Gamma API](https://docs.polymarket.com/api-reference/events/list-events-keyset-pagination).
 
