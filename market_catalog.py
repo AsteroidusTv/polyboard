@@ -22,6 +22,7 @@ SORTS = {"trending": ("volume24hr", False), "new": ("createdAt", False),
          "volume": ("volume", False)}
 PAGE_SIZE = 18
 PAGES_PER_REQUEST = 3
+PREVIEW_MARKETS = 4
 TOKEN = re.compile(r"[0-9]{1,78}")
 
 
@@ -161,11 +162,27 @@ def event_card(event, category, excluded, side, band, after, before, liquidity, 
             "created_at": epoch(event.get("createdAt")) or 0}
 
 
+def preview_card(card):
+    markets = card["markets"]
+    if all({clean(outcome["label"]) for outcome in market["outcomes"]} == {"yes", "no"} for market in markets):
+        markets = sorted(markets, key=lambda market: market["outcomes"][0]["price"]
+                         if market["outcomes"][0]["price"] is not None else -1, reverse=True)
+    return {**card, "matching_market_count": len(markets), "markets": markets[:PREVIEW_MARKETS]}
+
+
 def browse_markets(query):
     q, category, excluded, sort, side, band, after, before, liquidity, spread, cursor = parse_filters(query)
+    event_slug = query.get("event", [""])[0]
     parts = polymarket_link(q) if q else None
+    sought = set(terms(q)) if q and parts is None else set()
     if category in excluded:
         return {"events": [], "next_cursor": None}
+    if event_slug:
+        if not SLUG.fullmatch(event_slug) or cursor:
+            raise CatalogError("Select a valid event.")
+        event = gamma_by_slug("events", event_slug)
+        card = event and event_card(event, category, excluded, side, band, after, before, liquidity, spread, sought)
+        return {"events": [card] if card else [], "next_cursor": None}
     if q and parts is None and cursor and (not cursor.isdecimal() or len(cursor) > 4 or int(cursor) < 1):
         raise CatalogError("Invalid search page.")
     order, ascending = SORTS.get(sort, SORTS["trending"])
@@ -179,7 +196,6 @@ def browse_markets(query):
         near_now = datetime.fromtimestamp(int(time()) // 900 * 900, timezone.utc)
         params.append(("end_date_min", near_now.isoformat()))
     cards = {}
-    sought = set(terms(q)) if q and parts is None else set()
     swiss = bool(parts is None and q and swiss_referendum_search(clean(q)))
     for _ in range(PAGES_PER_REQUEST):
         if parts is not None:
@@ -217,4 +233,6 @@ def browse_markets(query):
     elif sort != "relevance":
         key = {"trending": "volume_24h", "new": "created_at"}.get(sort, sort)
         result.sort(key=lambda row: row[key], reverse=True)
+    if query.get("preview") == ["1"]:
+        result = [preview_card(card) for card in result]
     return {"events": result, "next_cursor": cursor}

@@ -217,6 +217,7 @@
 #catalog-event-search { width: min(210px, 100%); min-height: 34px; font-size: .81rem; }
 #catalog-event-list { margin-top: 7px; }
 #catalog-event-list > p { padding: 10px 0; font-size: .85rem; }
+#catalog-event-list-status { margin: 8px 0; font-size: .8rem; }
 .event-market-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(104px, 29%) auto;

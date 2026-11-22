@@ -468,23 +468,29 @@ def extended_offsets(offsets, selected):
     ))[:4]
 
 
+@lru_cache(maxsize=8192)
+def prior_observation(api, token, cutoff, bucket):
+    records = api("prices-history", {"token_id": token, "as_of": cutoff})["data"] or []
+    quote = records[-1] if records else {}
+    return quote.get("timestamp"), quote.get("price"), quote.get("resolution_seconds", 0)
+
+
 def sample_price(api, row, resolved, outcome, seconds):
     cutoff = resolved - seconds
     if reason := market_unavailable(row, cutoff):
         return {"cutoff": cutoff, "missing": reason}
     max_age = min(36 * HOUR, max(30, seconds // 2))
-    query = {"token_id": row["yes_token"], "as_of": cutoff}
+    as_of = cutoff
+    bucket = int(time() // 1800)
     for _ in range(2):
-        records = api("prices-history", query)["data"] or []
-        quote = records[-1] if records else {}
-        stamp, price, width = quote.get("timestamp"), quote.get("price"), quote.get("resolution_seconds", 0)
+        stamp, price, width = prior_observation(api, row["yes_token"], as_of, bucket)
         if not isinstance(stamp, int) or not isinstance(price, (int, float)) or not isfinite(price) or not 0 <= price <= 1:
             break
         if not isinstance(width, int) or width < 0 or stamp > cutoff or cutoff - stamp > max_age:
             break
         # An unfinished bucket may include prints after the cutoff.
         if stamp + width > cutoff:
-            query["as_of"] = stamp - 1
+            as_of = stamp - 1
             continue
         return {"cutoff": cutoff, "observed_at": stamp, "price": price,
                 "favorite_correct": (price > .5) == bool(outcome) if price != .5 else None,
@@ -597,7 +603,7 @@ def study(slug, scope, api, bucket):
     offsets = defaults + extended_offsets(defaults, selected)
     cases = []
     failed = 0
-    with ThreadPoolExecutor(max_workers=6) as pool:
+    with ThreadPoolExecutor(max_workers=10) as pool:
         for row, reason, resolved, outcome in selected:
             case = {**summary(row), "condition": row["condition"], "event": row["event"],
                     "reason": reason, "broader": reason in BROADER_MATCHES,

@@ -4,9 +4,12 @@ import json
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
+from hashlib import blake2s
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from math import isfinite
 from pathlib import Path
+from time import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlencode, urlsplit
 from urllib.request import Request, urlopen
@@ -85,7 +88,7 @@ def fetch_positions(wallet):
 
 
 def fetch_trades(wallet, cursor):
-    params = {"user": wallet.lower(), "limit": 100, "start": 1}
+    params = {"user": wallet.lower(), "limit": 500, "start": 1}
     if cursor:
         params["cursor"] = cursor
     rows, next_cursor = data_page("trades", params)
@@ -166,12 +169,14 @@ def latest_trading_fees(points):
             "net_paid_usd": net, "timestamp": latest["timestamp"]}
 
 
-def fetch_market_history(token, condition=None, wallet=None):
-    def prices():
-        rows = [row for page, _ in data_pages("prices-history", {"token_id": token, "interval": "max"})
-                for row in page]
-        return chart_points(rows, "price")
+@lru_cache(maxsize=128)
+def market_price_series(token, bucket):
+    rows = (row for page, _ in data_pages("prices-history", {"token_id": token, "interval": "max"})
+            for row in page)
+    return chart_points(rows, "price")
 
+
+def fetch_market_history(token, condition=None, wallet=None):
     def resolution():
         return any(row.get("status", "").lower() == "resolved"
                    for row in data_request("resolutions", {"condition": condition})["data"])
@@ -189,7 +194,7 @@ def fetch_market_history(token, condition=None, wallet=None):
             return None
 
     with ThreadPoolExecutor(max_workers=3) as executor:
-        history = executor.submit(prices)
+        history = executor.submit(market_price_series, token, int(time() // 30))
         settled = executor.submit(resolution) if condition else None
         activity = executor.submit(executions) if condition and wallet else None
         raw_points = optional(history)
@@ -228,13 +233,19 @@ def fetch_trade_summary(wallet):
         return {"positions": summary, "trading_fees": fees}
 
 
+@lru_cache(maxsize=64)
+def recent_trade_summary(wallet, bucket):
+    return fetch_trade_summary(wallet)
+
+
 class Dashboard(BaseHTTPRequestHandler):
     watchlist = None
 
     def respond(self, status, body, mime="application/json", headers=None):
         self.send_response(status)
         self.send_header("Content-Type", f"{mime}; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
+        if status != 304:
+            self.send_header("Content-Length", str(len(body)))
         for name, value in {"Cache-Control": "no-store", **(headers or {})}.items():
             self.send_header(name, value)
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -243,7 +254,7 @@ class Dashboard(BaseHTTPRequestHandler):
                          "default-src 'self'; img-src 'self' https:; "
                          "base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
         self.end_headers()
-        if self.command != "HEAD":
+        if self.command != "HEAD" and status != 304:
             self.wfile.write(body)
 
     def send_json(self, status, data, headers=None):
@@ -277,7 +288,12 @@ class Dashboard(BaseHTTPRequestHandler):
                 return
         if url.path in FILES:
             filename, mime = FILES[url.path]
-            self.respond(200, (ROOT / filename).read_bytes(), mime)
+            content = (ROOT / filename).read_bytes()
+            tag = '"' + blake2s(content, digest_size=16).hexdigest() + '"'
+            cached = {value.strip().removeprefix("W/") for value in self.headers.get("If-None-Match", "").split(",")}
+            unchanged = tag in cached or "*" in cached
+            self.respond(304 if unchanged else 200, b"" if unchanged else content, mime,
+                         {"Cache-Control": "no-cache", "ETag": tag})
             return
         if url.path == "/api/market-metadata":
             from precedents import SLUG, discovery_market_details
@@ -332,7 +348,9 @@ class Dashboard(BaseHTTPRequestHandler):
             elif url.path == "/api/trades":
                 data = fetch_trades(wallet, cursor)
             elif url.path == "/api/trade-summary":
-                data = fetch_trade_summary(wallet)
+                address = wallet.lower()
+                data = (fetch_trade_summary(address) if query.get("fresh") == ["1"]
+                        else recent_trade_summary(address, int(time() // 15)))
             elif url.path == "/api/portfolio-history":
                 data = fetch_portfolio_history(wallet)
             elif url.path == "/api/portfolio-events":

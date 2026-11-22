@@ -282,6 +282,7 @@ async function loadTrades(force = false) {
       fees = cached.fees;
     } else if (group) {
       const query = new URLSearchParams({wallet: address});
+      if (force) query.set("fresh", "1");
       const response = await fetch("/api/trade-summary?" + query, {
         signal: AbortSignal.any([request.signal, AbortSignal.timeout(25000)])
       });

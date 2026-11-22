@@ -21,6 +21,8 @@
   const eventRangeControls = byId("event-history-ranges");
   const eventLegend = byId("event-history-legend");
   const eventHistoryStatus = byId("event-history-status");
+  const eventListStatus = byId("catalog-event-list-status");
+  const eventRetry = byId("catalog-event-retry");
   const grid = byId("catalog-grid");
   const more = byId("catalog-more");
   const moreLabel = byId("catalog-more-label");
@@ -262,7 +264,7 @@
     row.setAttribute("aria-label", "Show trade · " + market.title);
     const identity = node("span", undefined, "event-row-identity");
     const image = market.image !== event.image && imageFor(market);
-    const series = eventSeries.find((item) => item.market === market);
+    const series = eventSeries.find((item) => item.market.slug === market.slug);
     if (image) identity.append(image);
     else if (series) {
       const swatch = node("span", undefined, "event-series-key");
@@ -280,12 +282,18 @@
     return row;
   }
 
+  function matchingMarkets(event) {
+    return event.matching_market_count ?? event.markets.length;
+  }
+
   function renderEventList() {
     const sought = normalize(eventSearch.value);
     const rows = eventMarkets.filter((market) => normalize(market.label + " " + market.title).includes(sought));
-    byId("catalog-event-count").textContent = sought ? rows.length + " of " + eventMarkets.length : String(eventMarkets.length);
-    byId("catalog-event-list").replaceChildren(...(rows.length ? rows.map((row) => marketRow(row, selectedEvent))
-      : [node("p", "No markets match this search.", "muted")]));
+    const total = matchingMarkets(selectedEvent);
+    byId("catalog-event-count").textContent = sought ? rows.length + " of " + total : String(total);
+    const content = rows.map((row) => marketRow(row, selectedEvent));
+    if (!rows.length && eventMarkets.length >= total) content.push(node("p", "No markets match this search.", "muted"));
+    byId("catalog-event-list").replaceChildren(...content);
   }
 
   function normalize(value) {
@@ -309,6 +317,7 @@
     for (const control of eventRangeControls.querySelectorAll("button")) {
       control.setAttribute("aria-pressed", String(Number(control.dataset.days) === eventRange));
     }
+    const focusedSeries = eventLegend.contains(document.activeElement) ? document.activeElement.dataset.series : undefined;
     eventLegend.replaceChildren(...available.map((series) => {
       const {market} = series;
       const outcome = market.outcomes[0].label;
@@ -326,17 +335,16 @@
       toggle.append(node("span", name, "event-series-label"), node("strong", priceLabel(market.outcomes[0].price)));
       return toggle;
     }));
+    if (focusedSeries !== undefined) eventLegend.querySelector(`[data-series="${focusedSeries}"]`)?.focus({preventScroll: true});
     drawEventHistory();
   }
 
-  async function loadEventHistory() {
-    eventRequest?.abort();
-    const request = eventRequest = new AbortController();
+  async function loadEventHistory(signal) {
     eventCanvas.hidden = eventLegend.hidden = eventRangeControls.hidden = true;
     eventHistoryStatus.textContent = "Loading price history…";
     eventHistoryStatus.dataset.loading = "";
     eventHistoryStatus.hidden = false;
-    const timeout = AbortSignal.any([request.signal, AbortSignal.timeout(12000)]);
+    const timeout = AbortSignal.any([signal, AbortSignal.timeout(12000)]);
     await Promise.all(eventSeries.map(async (series) => {
       try {
         const params = new URLSearchParams({token: series.market.token_id});
@@ -344,11 +352,39 @@
         if (!response.ok) return;
         const {points} = await response.json();
         series.points = points.filter(([timestamp, price]) => Number.isFinite(timestamp) && Number.isFinite(price) && price >= 0 && price <= 1);
+        if (!signal.aborted && eventCanvas.hidden && series.points.length >= 2) renderEventHistory();
       } catch {
         // Other series can still be displayed if a market has no history.
       }
     }));
-    if (!request.signal.aborted) renderEventHistory();
+    if (!signal.aborted) renderEventHistory();
+  }
+
+  async function loadEventMarkets(event, signal) {
+    eventRetry.hidden = true;
+    eventListStatus.hidden = false;
+    eventListStatus.textContent = "Loading submarkets…";
+    const params = catalogParameters();
+    params.set("event", event.slug);
+    try {
+      const response = await fetch("/api/markets?" + params, {
+        signal: AbortSignal.any([signal, AbortSignal.timeout(12000)])
+      });
+      if (!response.ok) throw new Error("Submarkets couldn’t load.");
+      const {events} = await response.json();
+      if (signal.aborted) return;
+      const full = events.find(({slug}) => slug === event.slug);
+      if (!full) throw new Error("Matching submarkets are no longer available.");
+      selectedEvent = full;
+      eventMarkets = orderedMarkets(full);
+      eventListStatus.hidden = true;
+      renderEventList();
+    } catch (failure) {
+      if (signal.aborted) return;
+      eventListStatus.textContent = ["TypeError", "TimeoutError"].includes(failure.name)
+        ? "Submarkets couldn’t load." : failure.message;
+      eventRetry.hidden = false;
+    }
   }
 
   function orderedMarkets(event) {
@@ -358,6 +394,8 @@
   }
 
   function openEvent(event) {
+    eventRequest?.abort();
+    eventRequest = new AbortController();
     selectedEvent = event;
     eventMarkets = orderedMarkets(event);
     eventSeries = eventMarkets.filter((market) => /^\d{1,78}$/.test(market.token_id || "")).slice(0, seriesColors.length)
@@ -377,11 +415,14 @@
     byId("catalog-event-stats").textContent = stats.join(" · ");
     byId("catalog-event-link").href = "https://polymarket.com/event/" + encodeURIComponent(event.slug);
     eventSearch.value = "";
-    eventSearch.hidden = event.markets.length < 7;
+    eventSearch.hidden = matchingMarkets(event) < 7;
+    eventListStatus.hidden = eventRetry.hidden = true;
     renderEventList();
     eventDialog.showModal();
     eventDialog.querySelector(".market-dialog-scroll").scrollTop = 0;
-    loadEventHistory();
+    const signal = eventRequest.signal;
+    loadEventHistory(signal);
+    if (matchingMarkets(event) > event.markets.length) loadEventMarkets(event, signal);
   }
 
   function eventCard(event) {
@@ -390,7 +431,7 @@
     const image = imageFor(event);
     if (image) identity.append(image);
     const title = node("div");
-    const count = event.markets.length;
+    const count = matchingMarkets(event);
     const cardAction = button(undefined, "market-card-action", () => {
       if (count > 1) openEvent(event);
       else showMarket(event.markets[0], event);
@@ -483,6 +524,17 @@
     }
   }
 
+  function catalogParameters() {
+    const params = parameters(state);
+    params.delete("from");
+    params.delete("through");
+    if (state.ends === "custom") {
+      if (state.from) params.set("after", midnight(state.from));
+      if (state.through) params.set("before", midnight(state.through, true));
+    }
+    return params;
+  }
+
   async function load(reset) {
     if (!reset && (request || !cursor)) return;
     observeMarketScroll(false);
@@ -518,13 +570,8 @@
     moreStatus.textContent = "";
     error.hidden = true;
     if (reset) status.textContent = "Loading markets…";
-    const params = parameters(state);
-    params.delete("from");
-    params.delete("through");
-    if (state.ends === "custom") {
-      if (state.from) params.set("after", midnight(state.from));
-      if (state.through) params.set("before", midnight(state.through, true));
-    }
+    const params = catalogParameters();
+    params.set("preview", "1");
     if (cursor) params.set("cursor", cursor);
     try {
       const response = await fetch("/api/markets?" + params, {
@@ -607,6 +654,7 @@
   more.addEventListener("click", appendMarkets);
   byId("catalog-retry").addEventListener("click", () => load(true));
   eventSearch.addEventListener("input", renderEventList);
+  eventRetry.addEventListener("click", () => loadEventMarkets(selectedEvent, eventRequest.signal));
   eventDialog.addEventListener("close", () => { if (!eventDialog.open) eventRequest?.abort(); });
   eventRangeControls.addEventListener("click", (event) => {
     const control = event.target.closest("button[data-days]");
