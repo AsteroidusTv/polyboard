@@ -488,6 +488,27 @@ button.chart-trade-row:is(:hover, :focus-visible) { background: #26324b; outline
 #precedent-details { margin-top: 22px; }
 #precedent-details .section-heading { position: relative; align-items: center; }
 #precedent-details .info-bubble { width: min(24rem, calc(100vw - 42px)); }
+.precedent-matrix-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+#precedent-horizon-toggle { height: 34px; padding-inline: 10px; font-size: .82rem; }
+#precedent-horizon-form { display: grid; gap: 10px; }
+#precedent-horizon-form > p { font-size: .85rem; }
+#precedent-horizon-choices { display: grid; gap: 4px; margin: 0; padding: 0; min-width: 0; border: 0; }
+.precedent-horizon-choice {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #111720;
+  cursor: pointer;
+}
+.precedent-horizon-choice input { width: 15px; height: 15px; margin: 0; accent-color: #a9bbff; }
+.precedent-horizon-choice:has(input:checked) { border-color: #425780; background: #1c263a; }
+.precedent-horizon-choice:has(input:disabled) { cursor: default; opacity: .6; }
+.precedent-horizon-choice small { font-weight: 500; }
 .calibration-heading { display: flex; align-items: center; gap: 4px; }
 .calibration-heading .info-trigger { width: 32px; }
 #precedent-details #calibration-help { left: 0; width: min(24rem, calc(100vw - 42px)); }
@@ -533,10 +554,10 @@ button.chart-trade-row:is(:hover, :focus-visible) { background: #26324b; outline
   #activity-table td:last-child { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: baseline; padding-top: 6px; border-top: 1px solid var(--border); }
   #precedent-table colgroup { display: none; }
   #precedent-table thead { position: static; display: block; width: auto; height: auto; overflow: visible; clip-path: none; margin-bottom: 12px; }
-  #precedent-table thead tr { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; }
+  #precedent-table thead tr { display: grid; grid-template-columns: repeat(var(--matrix-columns, 4), minmax(0, 1fr)); gap: 5px; }
   #precedent-table thead th:nth-child(-n+2) { display: none; }
   #precedent-table thead th { padding: 6px 7px; border: 1px solid var(--border); border-radius: 8px; }
-  #precedent-table tbody tr { gap: 7px; }
+  #precedent-table tbody tr { grid-template-columns: repeat(var(--matrix-columns, 4), minmax(0, 1fr)); gap: 7px; }
   #precedent-table td { padding: 0; }
   #precedent-table td:first-child { padding-bottom: 7px; }
   #precedent-table td:nth-child(2) { display: flex; align-items: center; gap: 7px; grid-column: 1 / -1; }
@@ -568,7 +589,9 @@ button.chart-trade-row:is(:hover, :focus-visible) { background: #26324b; outline
   .market-chart .chart-ranges button { min-width: 29px; }
   .chart-tooltip.is-cluster { --trade-row-inset: 6px; padding: 8px 9px; }
   .chart-trade-row { column-gap: 9px; padding-block: 6px; }
-  #precedent-table thead tr { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #precedent-table thead tr, #precedent-table tbody tr {
+    grid-template-columns: repeat(var(--matrix-narrow-columns, 2), minmax(0, 1fr));
+  }
   .precedent-market-context { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .precedent-market-context > div:first-child { grid-column: 1 / -1; border-bottom: 1px solid var(--border); }
   .precedent-market-context > div:nth-child(2) { border-inline-start: 0; }

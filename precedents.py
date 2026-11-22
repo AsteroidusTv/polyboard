@@ -18,6 +18,8 @@ MINUTE = 60
 HOUR = 60 * MINUTE
 DAY = 24 * HOUR
 LONG_HORIZONS = (7 * DAY, 14 * DAY, 30 * DAY, 90 * DAY)
+EXTENDED_HORIZONS = (5 * MINUTE, 10 * MINUTE, 30 * MINUTE, HOUR, 2 * HOUR, 6 * HOUR, 12 * HOUR,
+                     DAY, 3 * DAY, 7 * DAY, 14 * DAY, 30 * DAY, 60 * DAY, 90 * DAY, 180 * DAY, 365 * DAY)
 MAX_CASES = 24
 MAX_MATCHES = 120
 SWISS_QUERIES = ("Switzerland referendum", "Swiss referendum", "Swiss popular vote")
@@ -452,12 +454,24 @@ def settlement(row, record):
     return resolved, outcome
 
 
+def market_unavailable(row, cutoff):
+    if row["listed"] and row["listed"] > cutoff:
+        return "Market was not open yet"
+    if row["closed_at"] and row["closed_at"] <= cutoff:
+        return "Market had already closed"
+    return None
+
+
+def extended_offsets(offsets, selected):
+    return tuple(offset for offset in EXTENDED_HORIZONS if offset > offsets[-1] and any(
+        not market_unavailable(row, resolved - offset) for row, _, resolved, _ in selected
+    ))[:4]
+
+
 def sample_price(api, row, resolved, outcome, seconds):
     cutoff = resolved - seconds
-    if row["listed"] and row["listed"] > cutoff:
-        return {"cutoff": cutoff, "missing": "Market was not open yet"}
-    if row["closed_at"] and row["closed_at"] <= cutoff:
-        return {"cutoff": cutoff, "missing": "Market had already closed"}
+    if reason := market_unavailable(row, cutoff):
+        return {"cutoff": cutoff, "missing": reason}
     max_age = min(36 * HOUR, max(30, seconds // 2))
     query = {"token_id": row["yes_token"], "as_of": cutoff}
     for _ in range(2):
@@ -529,7 +543,7 @@ def study(slug, scope, api, bucket):
     target = target_market(slug)
     if not target:
         return None
-    offsets = horizon_offsets(target["duration"])
+    defaults = horizon_offsets(target["duration"])
     overview = {**summary(target), "context": target["context"]}
     cutoff = int(time())
     if target["closed"]:
@@ -537,7 +551,8 @@ def study(slug, scope, api, bucket):
         record = next((row for row in rows if row["condition_id"] == target["condition"]), {})
         target_resolution = settlement(target, record)
         if not target_resolution:
-            return {"target": overview, "cases": [], "horizons": [score([], offset) for offset in offsets],
+            return {"target": overview, "cases": [], "horizons": [score([], offset) for offset in defaults],
+                    "default_horizons": defaults,
                     "matched": 0, "unusable": 0, "truncated": False, "status": "target_unverified"}
         cutoff, outcome = target_resolution
         overview["resolution"] = {"at": cutoff, "outcome": "Yes" if outcome else "No"}
@@ -579,6 +594,7 @@ def study(slug, scope, api, bucket):
     selected = comparison_sample(eligible, target, MAX_CASES, 6)
     selected.sort(key=lambda entry: (entry[1] not in BROADER_MATCHES,
                                      similar_duration(target, entry[0]), entry[2]), reverse=True)
+    offsets = defaults + extended_offsets(defaults, selected)
     cases = []
     failed = 0
     with ThreadPoolExecutor(max_workers=6) as pool:
@@ -597,10 +613,11 @@ def study(slug, scope, api, bucket):
                     failed += 1
                     case["prices"][day] = {"missing": "Polymarket price request failed"}
     horizons = [score(cases, offset) for offset in offsets]
+    horizons = [row for row in horizons if row["seconds"] in defaults or row["count"] > 0]
     status = ("useful" if any(row["count"] >= 12 and row["events"] >= 5 for row in horizons)
               else "limited" if any(row["average_error"] is not None for row in horizons)
               else "insufficient" if cases else "no_cases")
-    return {"target": overview, "cases": cases, "horizons": horizons, "matched": len(eligible),
+    return {"target": overview, "cases": cases, "horizons": horizons, "default_horizons": defaults, "matched": len(eligible),
             "unusable": len(candidates) - len(eligible) - excluded, "other_duration": excluded,
             "truncated": more or len(eligible) > MAX_CASES,
             "failed_quotes": failed, "status": status}

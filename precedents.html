@@ -64,9 +64,12 @@
             <h2 id="precedent-cases-title">Past market accuracy</h2>
             <p id="precedent-count" class="muted"></p>
           </div>
-          <div id="history-method" class="info-control">
-            <button type="button" class="info-trigger" data-info-trigger aria-expanded="false" aria-controls="precedent-help"><span aria-hidden="true">ⓘ</span> Method</button>
-            <p class="info-bubble" id="precedent-help" hidden>Horizons follow the scheduled market duration. D means days, H hours, M minutes and S seconds before official Polymarket resolution. Above 50%, Yes is favored. Below 50%, No is favored. A 50% price has no favorite. The signed gap is the final Yes value minus the historical Yes price. Each quote must come from a complete observation before the cutoff and be recent for that horizon. Average error and calibration require five markets across three events.</p>
+          <div class="precedent-matrix-actions">
+            <button class="secondary-button" type="button" id="precedent-horizon-toggle" aria-haspopup="dialog" aria-controls="precedent-horizons" hidden>Horizons</button>
+            <div id="history-method" class="info-control">
+              <button type="button" class="info-trigger" data-info-trigger aria-expanded="false" aria-controls="precedent-help"><span aria-hidden="true">ⓘ</span> Method</button>
+              <p class="info-bubble" id="precedent-help" hidden>Default horizons follow the scheduled market duration. D means days, H hours, M minutes and S seconds before official Polymarket resolution. Above 50%, Yes is favored. Below 50%, No is favored. A 50% price has no favorite. The signed gap is the final Yes value minus the historical Yes price. Each quote must come from a complete observation before the cutoff and be recent for that horizon. Average error and calibration require five markets across three events.</p>
+            </div>
           </div>
         </div>
         <div class="precedent-table-wrap">
@@ -92,6 +95,22 @@
       </div>
       <p id="precedent-coverage" class="muted"></p>
     </section>
+    <dialog id="precedent-horizons" class="watch-dialog" aria-labelledby="precedent-horizons-title">
+      <header class="watch-dialog-head">
+        <h2 id="precedent-horizons-title">Horizons</h2>
+        <form method="dialog"><button type="submit" class="text-button activity-dismiss" aria-label="Close horizons">×</button></form>
+      </header>
+      <div class="watch-dialog-body">
+        <form id="precedent-horizon-form">
+          <p class="muted">Choose up to four columns. Coverage shows how many markets have a price.</p>
+          <fieldset id="precedent-horizon-choices" aria-label="Comparison horizons"></fieldset>
+          <div class="watch-inline watch-form-actions">
+            <button type="button" class="text-button" id="precedent-horizon-default">Reset to defaults</button>
+            <button type="submit" id="precedent-horizon-apply">Apply</button>
+          </div>
+        </form>
+      </div>
+    </dialog>
     <dialog id="risk-dialog" aria-labelledby="risk-title">
       <header class="review-heading">
         <div><h2 id="risk-title">Risk check</h2><p class="muted" id="risk-market"></p></div>

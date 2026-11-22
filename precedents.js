@@ -8,6 +8,10 @@ const loadingMessage = byId("precedent-loading-message");
 const status = byId("precedent-status");
 const error = byId("precedent-error");
 const calibrationHorizon = byId("precedent-calibration-horizon");
+const horizonToggle = byId("precedent-horizon-toggle");
+const horizonDialog = byId("precedent-horizons");
+const horizonChoices = byId("precedent-horizon-choices");
+const horizonApply = byId("precedent-horizon-apply");
 const scopeButtons = document.querySelectorAll("[data-scope]");
 const quoteDate = new Intl.DateTimeFormat("en-US", {dateStyle: "medium", timeStyle: "short", timeZone: "UTC"});
 const resolutionDate = new Intl.DateTimeFormat("en-US", {dateStyle: "medium", timeZone: "UTC"});
@@ -24,6 +28,7 @@ let request;
 let busyControl;
 let shown;
 let report;
+let matrixHorizons = [];
 
 function el(tag, value, className) {
   const node = document.createElement(tag);
@@ -146,7 +151,7 @@ function quoteCell(seconds, quote) {
   return resultCell(horizonLabel(seconds), stack);
 }
 
-function caseRow(row) {
+function caseRow(row, horizons) {
   const tr = el("tr");
   const title = urlFor(row, row.label);
   if (row.title !== row.label) title.title = row.title;
@@ -159,18 +164,18 @@ function caseRow(row) {
   const resolution = el("div", null, "precedent-resolution");
   resolution.append(outcome, el("span", dateLabel(row.resolved_at), "muted"));
   tr.append(resultCell("Market", market), resultCell("Resolved", resolution));
-  for (const {seconds} of report.horizons) tr.append(quoteCell(seconds, row.prices[seconds]));
+  for (const {seconds} of horizons) tr.append(quoteCell(seconds, row.prices[seconds]));
   return tr;
 }
 
-function matrixHead() {
+function matrixHead(horizons) {
   const tr = el("tr");
   for (const title of ["Market", "Resolved"]) {
     const th = el("th", title);
     th.scope = "col";
     tr.append(th);
   }
-  for (const horizon of report.horizons) {
+  for (const horizon of horizons) {
     const th = el("th", null, "precedent-horizon-head");
     th.scope = "col";
     th.append(el("strong", horizonLabel(horizon.seconds)));
@@ -187,6 +192,41 @@ function matrixHead() {
     tr.append(th);
   }
   return tr;
+}
+
+function defaultHorizons() {
+  return report.default_horizons || report.horizons.map(({seconds}) => seconds);
+}
+
+function renderMatrix() {
+  const horizons = report.horizons.filter(({seconds}) => matrixHorizons.includes(seconds));
+  byId("precedent-horizon-columns").span = horizons.length;
+  const table = byId("precedent-table");
+  table.style.setProperty("--matrix-columns", horizons.length);
+  table.style.setProperty("--matrix-narrow-columns", Math.min(2, horizons.length));
+  byId("precedent-head").replaceChildren(matrixHead(horizons));
+  byId("precedent-rows").replaceChildren(...report.cases.map((row) => caseRow(row, horizons)));
+}
+
+function updateHorizonChoices() {
+  const choices = [...horizonChoices.querySelectorAll("input")];
+  const count = choices.filter((choice) => choice.checked).length;
+  for (const choice of choices) choice.disabled = !choice.checked && count >= 4;
+  horizonApply.disabled = count === 0;
+}
+
+function showHorizonChoices(selection) {
+  horizonChoices.replaceChildren(...report.horizons.map(({seconds, count}) => {
+    const label = el("label", null, "precedent-horizon-choice");
+    const check = el("input");
+    check.type = "checkbox";
+    check.value = seconds;
+    check.checked = selection.includes(seconds);
+    label.append(check, el("strong", horizonLabel(seconds)),
+      el("small", count + "/" + report.cases.length + " markets", "muted"));
+    return label;
+  }));
+  updateHorizonChoices();
 }
 
 function renderCalibration() {
@@ -280,9 +320,12 @@ function renderReport(focus) {
   const broaderCount = report.cases.filter((row) => row.broader).length;
   const scopeDetail = report.scope === "broad" ? (broaderCount ? ` · ${broaderCount} broader matches` : " · Same-family matches only") : "";
   byId("precedent-count").textContent = `${report.cases.length} markets across ${eventCount} events${scopeDetail}`;
-  byId("precedent-horizon-columns").span = report.horizons.length;
-  byId("precedent-head").replaceChildren(matrixHead());
-  byId("precedent-rows").replaceChildren(...report.cases.map(caseRow));
+  const defaults = defaultHorizons();
+  const available = new Set(report.horizons.map(({seconds}) => seconds));
+  const preserved = focus ? [] : matrixHorizons.filter((seconds) => available.has(seconds));
+  matrixHorizons = preserved.length ? preserved : defaults;
+  horizonToggle.hidden = report.horizons.length <= defaults.length;
+  renderMatrix();
   const calibrated = report.horizons.filter((row) => Number.isFinite(row.brier_skill));
   byId("precedent-calibration").hidden = !calibrated.length;
   calibrationHorizon.replaceChildren(...calibrated.map(({seconds}) => new Option(horizonLabel(seconds), seconds)));
@@ -348,6 +391,19 @@ function route() {
 }
 
 calibrationHorizon.addEventListener("change", renderCalibration);
+horizonToggle.addEventListener("click", () => {
+  showHorizonChoices(matrixHorizons);
+  horizonDialog.showModal();
+});
+horizonChoices.addEventListener("change", updateHorizonChoices);
+byId("precedent-horizon-default").addEventListener("click", () => showHorizonChoices(defaultHorizons()));
+byId("precedent-horizon-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  matrixHorizons = [...horizonChoices.querySelectorAll("input:checked")].map(({value}) => Number(value));
+  renderMatrix();
+  horizonDialog.close();
+  DashboardWidgets.softUpdate(byId("precedent-table"));
+});
 for (const button of scopeButtons) {
   button.addEventListener("click", () => {
     const params = new URLSearchParams(location.search);
