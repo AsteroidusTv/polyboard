@@ -10,6 +10,7 @@
   --positive: #6ae4ac;
   --negative: #ff919d;
 }
+:root:has(dialog:modal) { overflow: hidden; }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 body { margin: 0; }
