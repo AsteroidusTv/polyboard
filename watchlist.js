@@ -116,15 +116,16 @@ const DashboardWatchlist = (() => {
 
   function mountActions(control, addAlert, error, market) {
     if (!detailButtons.has(control)) {
-      control.addEventListener("click", () => perform(control, async () => {
+      control.addEventListener("click", () => {
         const selected = detailButtons.get(control).market;
         const followed = state.watches.some(({slug}) => slug === selected.slug);
         if (followed) {
           confirmUnfollow(selected);
         } else {
-          await change({action: "follow", slug: selected.slug});
+          const opening = followAndOpenAlert(selected);
+          perform(control, () => opening, error);
         }
-      }, error));
+      });
       addAlert.addEventListener("click", () => {
         const selected = detailButtons.get(control).market;
         const item = state.watches.find(({slug}) => slug === selected.slug);
@@ -280,12 +281,39 @@ const DashboardWatchlist = (() => {
     cards.replaceChildren(...state.watches.map(card));
   }
 
-  function openAlert(market, token) {
+  function alertBody(market) {
     alertDialog ||= dialog("watch-alert", "Add price alert");
     const subtitle = alertDialog.querySelector(".watch-dialog-subtitle");
     subtitle.textContent = market.title;
     subtitle.hidden = false;
-    const body = alertDialog.querySelector(".watch-dialog-body");
+    return alertDialog.querySelector(".watch-dialog-body");
+  }
+
+  async function followAndOpenAlert(market) {
+    const body = alertBody(market);
+    const status = el("p", "Loading alert settings…", "muted");
+    status.setAttribute("role", "status");
+    body.replaceChildren(status);
+    if (!alertDialog.open) alertDialog.showModal();
+    try {
+      const next = await change({action: "follow", slug: market.slug});
+      const followed = next.watches.find(({slug}) => slug === market.slug);
+      if (!followed) throw new Error("This market couldn’t be followed.");
+      if (alertDialog.open && body.contains(status)) openAlert(followed, market.token_id, true);
+    } catch (failure) {
+      if (!alertDialog.open || !body.contains(status)) throw failure;
+      status.className = "negative";
+      status.setAttribute("role", "alert");
+      status.textContent = failure.message;
+      const retry = button("Try again", () => perform(retry, () => followAndOpenAlert(market), status));
+      const actions = el("div", undefined, "watch-inline watch-form-actions");
+      actions.append(retry);
+      body.append(actions);
+    }
+  }
+
+  function openAlert(market, token, fromFollow = false) {
+    const body = alertBody(market);
     body.innerHTML = `<form class="watch-alert-form">
       <div class="watch-alert-fields">
         <div><label for="watch-outcome">Outcome</label><select id="watch-outcome"></select></div>
@@ -299,7 +327,7 @@ const DashboardWatchlist = (() => {
           <input id="watch-value" type="number" inputmode="decimal" min="0.001" step="0.001" required placeholder="60"></div>
       </div>
       <p class="watch-preview muted"></p><p class="negative" role="alert"></p>
-      <div class="watch-inline watch-form-actions"><button type="button" class="secondary-button">Cancel</button><button type="submit">Create alert</button></div>
+      <div class="watch-inline watch-form-actions"><button type="button" class="secondary-button">${fromFollow ? "Follow without alert" : "Cancel"}</button><button type="submit">Create alert</button></div>
     </form>`;
     const form = body.querySelector("form");
     const outcome = byId("watch-outcome");
@@ -344,8 +372,8 @@ const DashboardWatchlist = (() => {
       }, error);
     });
     preview();
-    alertDialog.showModal();
-    outcome.focus();
+    if (!alertDialog.open) alertDialog.showModal();
+    (fromFollow ? value : outcome).focus({preventScroll: true});
   }
 
   function canPush() {
