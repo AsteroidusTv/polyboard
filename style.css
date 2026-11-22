@@ -110,6 +110,7 @@ tbody tr:nth-child(odd) { --position-background: var(--surface); }
 :is(#positions-table, #trade-table) .market { gap: 10px; }
 :is(#positions-table, #trade-table) .title { line-height: 1.35; }
 .position-prices { display: inline-flex; align-items: center; gap: 6px; }
+#trade-table .position-prices > span { white-space: nowrap; overflow-wrap: normal; }
 .position-price-group, .price-settlement { display: block; }
 .price-settlement { margin-top: 2px; font-size: .72rem; }
 
@@ -551,6 +552,7 @@ button.chart-trade-row:is(:hover, :focus-visible) { background: #26324b; outline
   tbody td:first-child { grid-column: 1 / -1; width: auto; padding-bottom: 7px; border-bottom: 1px solid var(--border); }
   #trade-table:not(.is-position-history) td:last-child { grid-column: 1 / -1; }
   #trade-table.is-position-history td:last-child { text-align: right; }
+  #trade-table .position-prices { gap: 4px; font-size: .86rem; }
   .trade-date { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
   .cell-label { display: block; color: var(--muted); font-size: .76rem; }
   .is-simulating .win-toggle { flex-basis: 44px; margin-left: -6px; }
@@ -624,7 +626,7 @@ button.chart-trade-row:is(:hover, :focus-visible) { background: #26324b; outline
   :is(#positions-table, #trade-table) :is(.price-sort, .position-prices) { display: grid; grid-template-columns: minmax(0, 1fr) 1rem minmax(0, 1fr); gap: 6px; align-items: center; justify-items: center; }
   #positions-table th:nth-child(n+3) .sort-button:last-child { margin-right: -.8em; }
   #trade-table.is-position-history :is(th, td):nth-child(2) { text-align: center; }
-  #trade-table.is-position-history col:nth-child(2) { width: clamp(8.3rem, 13vw, 9.4rem); }
+  #trade-table.is-position-history col:nth-child(2) { width: clamp(9.4rem, 14vw, 10.7rem); }
   #trade-table.is-position-history col:nth-child(3) { width: clamp(5.4rem, 8vw, 6.5rem); }
   #trade-table.is-position-history col:nth-child(4) { width: clamp(6.75rem, 11vw, 8.1rem); }
   #trade-table.is-position-history col:nth-child(5) { width: clamp(8.5rem, 12vw, 10rem); }
