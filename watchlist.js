@@ -106,12 +106,12 @@ const DashboardWatchlist = (() => {
   function followButton(control, addAlert, market) {
     const current = state.watches.find((item) => item.slug === market?.slug);
     control.hidden = addAlert.hidden = true;
-    if (!market?.slug || (market.state === "closed" && !current) || market.is_combo) return;
+    if (!market?.slug || (!current && ["closed", "paused"].includes(market.state)) || market.is_combo) return;
     control.textContent = current ? "Following" : "Follow";
     control.setAttribute("aria-pressed", String(Boolean(current)));
     control.setAttribute("aria-label", current ? "Unfollow market" : "Follow market");
     control.hidden = false;
-    addAlert.hidden = !current;
+    addAlert.hidden = current?.state !== "open" || market.state === "closed";
   }
 
   function mountActions(control, addAlert, error, market) {
@@ -224,7 +224,8 @@ const DashboardWatchlist = (() => {
     for (const side of market.outcomes) {
       const quote = market.quotes[side.token_id];
       const column = el("div", undefined, "watch-quote");
-      column.append(el("span", side.label, "muted"), el("strong", quote ? showPrice(quote.current) : "—"));
+      const label = quote?.fresh === false && market.state === "open" ? side.label + " · stale" : side.label;
+      column.append(el("span", label, "muted"), el("strong", quote ? showPrice(quote.current) : "—"));
       const chart = sparkline(quote);
       if (chart) column.append(chart);
       quotes.append(column);

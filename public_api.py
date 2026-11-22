@@ -108,7 +108,12 @@ def snapshot(path, wallet, limit, cursor, fetch_positions, data_page):
             positions = pool.submit(position_data, fetch_positions, wallet)
             recent = pool.submit(trades_data, data_page, wallet, 15, "")
             payload = positions.result()
-            payload["recent_trades"] = recent.result()[0]
+            try:
+                payload["recent_trades"] = recent.result()[0]
+                payload["recent_trades_available"] = True
+            except (URLError, TimeoutError, ValueError, TypeError, KeyError, OverflowError, AttributeError):
+                payload["recent_trades"] = []
+                payload["recent_trades_available"] = False
         payload["exposure_by_market"] = market_exposure(payload["positions"], payload["totals"]["current_value_usd"])
         payload["exposure_by_event"] = market_exposure(payload["positions"], payload["totals"]["current_value_usd"],
                                                       by_event=True)
@@ -168,7 +173,8 @@ def as_text(path, data):
         lines.extend(f"- {row['event'] or row['market'] or 'Unknown event'} | {row['market_count']} market(s) | "
                      f"Value {money(row['current_value_usd'])} | {percent(row['share_of_open_value_pct'])}"
                      for row in data["exposure_by_event"])
-        lines.extend(["", f"Recent trades: {len(data['recent_trades'])}"])
+        recent = len(data["recent_trades"]) if data["recent_trades_available"] else "temporarily unavailable"
+        lines.extend(["", f"Recent trades: {recent}"])
         lines.extend(trade_line(row) for row in data["recent_trades"])
     if "trades" in data:
         lines.append(f"Trades on this page: {data['count']}")

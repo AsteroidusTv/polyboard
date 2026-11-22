@@ -10,7 +10,7 @@ import precedents
 import review_server
 import server
 import watchlist
-from public_api import market_exposure
+from public_api import market_exposure, snapshot
 from trade_summary import build_trade_summary
 
 
@@ -82,6 +82,16 @@ class PortfolioTests(unittest.TestCase):
         event, = market_exposure(positions, 10, by_event=True)
         self.assertEqual((event["market_count"], event["share_of_open_value_pct"]), (2, 100))
         self.assertEqual(len(market_exposure(positions, 10)), 2)
+
+    def test_public_portfolio_keeps_positions_when_trades_are_unavailable(self):
+        def unavailable(*args):
+            raise URLError("trades feed unavailable")
+
+        result, _ = snapshot("/portfolio", "wallet-with-unavailable-trades", 250, "",
+                             lambda _wallet: [{"status": "OPEN", "title": "Market"}], unavailable)
+        self.assertEqual(result["positions"][0]["market"], "Market")
+        self.assertEqual(result["recent_trades"], [])
+        self.assertFalse(result["recent_trades_available"])
 
 
 class WatchlistTests(unittest.TestCase):
