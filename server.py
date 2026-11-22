@@ -1,6 +1,7 @@
 """Serve a local, read-only dashboard backed by the public Polymarket Data API."""
 import argparse
 import json
+import logging
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
@@ -209,7 +210,11 @@ def fetch_trade_summary(wallet):
     combo_statuses = ("REDEEMABLE", "OPEN", "RESOLVED_WIN", "RESOLVED_LOSS")
 
     def fetch(resource, **filters):
-        return wallet_rows(wallet, resource, **filters)
+        try:
+            return wallet_rows(wallet, resource, **filters)
+        except (URLError, TimeoutError, ValueError, TypeError, KeyError, AttributeError):
+            logging.warning("Trade summary source unavailable: %s %s", resource, filters.get("status") or "")
+            return None
 
     def fetch_status(status):
         if status == "CLOSED":
@@ -221,16 +226,19 @@ def fetch_trade_summary(wallet):
         pnl = executor.submit(fetch_wallet_pnl, wallet, 4)
         positions = [executor.submit(fetch_status, status) for status in position_statuses]
         combos = [executor.submit(fetch, "positions/combos", status=status) for status in combo_statuses]
-        summary = build_trade_summary(
-            [row for job in positions for row in job.result()],
-            [row for job in combos for row in job.result()],
-            activity.result(),
-        )
+        position_groups = [job.result() for job in positions]
+        combo_groups = [job.result() for job in combos]
+        activity_rows = activity.result()
+        sources = [*position_groups, *combo_groups, activity_rows]
+        if all(group is None for group in sources):
+            raise URLError("Trade history sources unavailable")
+        summary = build_trade_summary([row for group in position_groups for row in group or []],
+                                      [row for group in combo_groups for row in group or []], activity_rows or [])
         try:
             fees = latest_trading_fees(pnl.result())
         except (URLError, TimeoutError, ValueError, TypeError, KeyError, AttributeError):
             fees = None
-        return {"positions": summary, "trading_fees": fees}
+        return {"positions": summary, "trading_fees": fees, "partial": any(group is None for group in sources)}
 
 
 @lru_cache(maxsize=64)
@@ -268,12 +276,14 @@ class Dashboard(BaseHTTPRequestHandler):
 
             serve(self, self.watchlist)
             return
-        if url.path in ("/positions", "/portfolio") or (
+        public_path = url.path.removeprefix("/api/public") if url.path.startswith("/api/public/") else ""
+        if public_path in ("/positions", "/portfolio", "/trades") or url.path in ("/positions", "/portfolio") or (
             url.path == "/trades" and any(key in query for key in ("user", "format", "limit", "cursor"))
         ):
             from public_api import serve
 
-            serve(self, url.path, query, fetch_positions, data_page)
+            serve(self, public_path or url.path, query, fetch_positions, data_page,
+                  prefix="/api/public" if public_path else "")
             return
         if url.path == "/precedents":
             from market_discovery import SLUG
@@ -334,14 +344,18 @@ class Dashboard(BaseHTTPRequestHandler):
                     self.send_json(400, {"error": str(error)})
                     return
             elif precedents:
-                from precedents import SLUG, compare_markets
+                from precedents import SLUG, compare_markets, traded_conditions
 
                 slug = query.get("market", [""])[0]
                 scope = query.get("scope", ["focused"])[0]
                 if not SLUG.fullmatch(slug) or scope not in ("focused", "broad"):
                     self.send_json(400, {"error": "Select a market and a valid comparison scope."})
                     return
-                data = compare_markets(slug, scope, wallet, data_request, data_pages)
+                if query.get("activity") == ["1"] and wallet:
+                    data = {"traded": sorted(traded_conditions(wallet.lower(), data_pages, int(time() // 60)))}
+                else:
+                    data = compare_markets(slug, scope, wallet, data_request, data_pages,
+                                           extended=query.get("horizons") != ["default"])
                 if data is None:
                     self.send_json(404, {"error": "Select a Polymarket market with a Yes/No outcome."})
                     return

@@ -20,6 +20,7 @@ POSITION_FIELDS = {
     "cost_basis_usd": "entry_cost_usdc", "current_value_usd": "current_value",
     "unrealized_pnl_usd": "unrealized_pnl", "unrealized_pnl_pct": "percent_pnl",
     "realized_pnl_usd": "realized_pnl", "market_slug": "slug",
+    "event_slug": "event_slug",
 }
 TRADE_FIELDS = {
     "market": "title", "outcome": "outcome", "condition_id": "condition_id", "token_id": "token_id",
@@ -69,15 +70,18 @@ def trades_data(data_page, wallet, limit, cursor):
     return trades, next_cursor
 
 
-def market_exposure(positions, current_value):
+def market_exposure(positions, current_value, by_event=False):
     groups = {}
     for row in positions:
-        key = row["condition_id"] or row["market"] or row["token_id"]
+        key = (row.get("event_slug") if by_event else None) or row["condition_id"] or row["market"] or row["token_id"]
         groups.setdefault(key, []).append(row)
     exposure = []
     for rows in groups.values():
         value = total(rows, "current_value_usd")
-        exposure.append({"market": rows[0]["market"], "condition_id": rows[0]["condition_id"],
+        identity = ({"event": rows[0].get("event_slug"), "market": rows[0]["market"],
+                     "market_count": len({row["condition_id"] or row["token_id"] for row in rows})} if by_event
+                    else {"market": rows[0]["market"], "condition_id": rows[0]["condition_id"]})
+        exposure.append({**identity,
                          "position_count": len(rows), "current_value_usd": value,
                          "cost_basis_usd": total(rows, "cost_basis_usd"),
                          "share_of_open_value_pct": round(100 * value / current_value, 2)
@@ -106,6 +110,8 @@ def snapshot(path, wallet, limit, cursor, fetch_positions, data_page):
             payload = positions.result()
             payload["recent_trades"] = recent.result()[0]
         payload["exposure_by_market"] = market_exposure(payload["positions"], payload["totals"]["current_value_usd"])
+        payload["exposure_by_event"] = market_exposure(payload["positions"], payload["totals"]["current_value_usd"],
+                                                      by_event=True)
 
     result = {"wallet": wallet, "source": SOURCE, "as_of_utc": utc(datetime.now(timezone.utc)), **payload}
     with cache_lock:
@@ -158,6 +164,10 @@ def as_text(path, data):
         lines.extend(["", "Exposure by market (as a share of open value)"])
         lines.extend(f"- {row['market'] or 'Unknown market'} | Value {money(row['current_value_usd'])} | "
                      f"{percent(row['share_of_open_value_pct'])}" for row in data["exposure_by_market"])
+        lines.extend(["", "Exposure by event (as a share of open value)"])
+        lines.extend(f"- {row['event'] or row['market'] or 'Unknown event'} | {row['market_count']} market(s) | "
+                     f"Value {money(row['current_value_usd'])} | {percent(row['share_of_open_value_pct'])}"
+                     for row in data["exposure_by_event"])
         lines.extend(["", f"Recent trades: {len(data['recent_trades'])}"])
         lines.extend(trade_line(row) for row in data["recent_trades"])
     if "trades" in data:
@@ -167,7 +177,7 @@ def as_text(path, data):
     return "\n".join(lines).rstrip() + "\n"
 
 
-def serve(handler, path, query, fetch_positions, data_page):
+def serve(handler, path, query, fetch_positions, data_page, prefix=""):
     def first(name, default=""):
         return query.get(name, [default])[0]
 
@@ -181,6 +191,8 @@ def serve(handler, path, query, fetch_positions, data_page):
 
     if output_format not in ("json", "text"):
         return fail(400, "Use format=json or format=text.")
+    if path == "/trades" and "offset" in query:
+        return fail(400, "Use the next page cursor instead of offset.")
     user = first("user").lower()
     if not WALLET.fullmatch(user):
         return fail(400, "Provide a public wallet address with ?user=0x followed by 40 hex digits.")
@@ -204,7 +216,7 @@ def serve(handler, path, query, fetch_positions, data_page):
 
     if path == "/trades":
         next_cursor = data["next_cursor"]
-        data = dict(data, next="/trades?" + urlencode({"user": user, "cursor": next_cursor,
+        data = dict(data, next=prefix + "/trades?" + urlencode({"user": user, "cursor": next_cursor,
                                                       "limit": limit, "format": output_format}) if next_cursor else None)
     headers = {"Cache-Control": "public, max-age=30", "X-Cache": "HIT" if hit else "MISS"}
     if output_format == "text":

@@ -36,6 +36,7 @@
   const status = byId("catalog-status");
   const error = byId("catalog-error");
   const percent = new Intl.NumberFormat("en-US", {style: "percent", maximumFractionDigits: 2});
+  const shortPercent = new Intl.NumberFormat("en-US", {style: "percent", maximumFractionDigits: 1});
   const dollars = new Intl.NumberFormat("en-US", {style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 1});
   const date = new Intl.DateTimeFormat("en-US", {dateStyle: "medium"});
   const cursorDate = new Intl.DateTimeFormat("en-US", {month: "short", day: "numeric", hour: "numeric", minute: "2-digit"});
@@ -55,6 +56,7 @@
   let eventPlot;
   let eventCursorTime;
   let catalogLocation;
+  let restoreRequest;
   let sparsePages = 0;
   const renderedCards = new Map();
   const seenCursors = new Set();
@@ -174,6 +176,7 @@
   }
 
   function navigate(next) {
+    restoreRequest?.abort();
     state = next;
     updateLocation(next);
     load(true);
@@ -190,7 +193,8 @@
     sort.options[0].textContent = state.q ? "Relevance" : "Default order";
     sort.value = state.sort;
     byId("catalog-heading").textContent = state.q ? "Search results" : state.category === "new" ? "Recently listed"
-      : categories.get(state.category) + " markets";
+      : state.category === "trending" && ["auto", "trending"].includes(state.sort) ? "Trending by 24h activity"
+        : categories.get(state.category) + " markets";
     const tags = [];
     const add = (text, patch) => {
       const chip = button(text + " ×", "secondary-button", () => {
@@ -237,9 +241,39 @@
   }
 
   function showMarket(market, event) {
+    const selection = {event: event.slug, market: market.slug, overview: eventDialog.open};
+    const destination = new URLSearchParams(location.search);
+    destination.set("event", selection.event);
+    destination.set("market", selection.market);
+    if (selection.overview) destination.set("overview", "1");
     DashboardWidgets.openMarket({
-      ...market, image: market.image || event.image, event_title: event.title, event_slug: event.slug, catalog_query: location.search
+      ...market, image: market.image || event.image, event_title: event.title, event_slug: event.slug,
+      catalog_query: "?" + destination,
+      onCompare() { history.replaceState({...history.state, catalogSelection: selection}, ""); }
     });
+  }
+
+  async function restoreSelection(selection) {
+    restoreRequest?.abort();
+    const controller = new AbortController();
+    restoreRequest = controller;
+    try {
+      const params = catalogParameters();
+      params.set("event", selection.event);
+      const response = await fetch("/api/markets?" + params, {
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)])
+      });
+      if (!response.ok) return;
+      const {events} = await response.json();
+      if (controller.signal.aborted || pane.hidden) return;
+      const event = events.find(({slug}) => slug === selection.event);
+      const market = event?.markets.find(({slug}) => slug === selection.market);
+      if (!market) return;
+      if (selection.overview && !eventDialog.open) openEvent(event);
+      showMarket(market, event);
+    } catch {
+      // The catalog stays usable when a previously opened market is unavailable.
+    }
   }
 
   function priceLabel(value) {
@@ -256,7 +290,10 @@
     for (const item of market.outcomes) {
       const quote = node("span", undefined, "market-quote");
       quote.dataset.side = shortOutcome(item.label);
-      quote.append(node("span", item.label, "market-quote-label"), node("strong", priceLabel(item.price)));
+      const price = item.price;
+      const label = !compact || !Number.isFinite(price) ? priceLabel(price)
+        : price > 0 && price < .001 ? "<0.1%" : price < 1 && price > .999 ? ">99.9%" : shortPercent.format(price);
+      quote.append(node("span", item.label, "market-quote-label"), node("strong", label));
       if (compact) quote.title = item.label + " " + priceLabel(item.price);
       pair.append(quote);
     }
@@ -768,13 +805,23 @@
   DashboardWidgets.slidingSelection(eventRangeControls);
   new ResizeObserver(drawEventHistory).observe(eventCanvas);
   function restore() {
-    if (byId("catalog-pane").hidden || location.search === catalogLocation) return;
+    if (location.hash.startsWith("#watchlist") || pane.hidden) return;
+    const params = new URLSearchParams(location.search);
+    const selection = history.state?.catalogSelection || {
+      event: params.get("event"), market: params.get("market"), overview: params.get("overview") === "1"
+    };
+    if (location.search === catalogLocation && !history.state?.catalogSelection) return;
     state = readState();
     updateLocation(state, true);
     load(true);
+    const slug = /^[a-z0-9][a-z0-9-]{0,250}$/;
+    if (!document.querySelector("#position-dialog[open]") && slug.test(selection.event || "") && slug.test(selection.market || "")) {
+      restoreSelection(selection);
+    }
   }
 
   window.addEventListener("popstate", restore);
+  window.addEventListener("pageshow", (event) => { if (event.persisted) restore(); });
   window.addEventListener("market-explore", () => {
     restore();
     observeMoreMarkets();

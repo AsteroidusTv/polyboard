@@ -22,7 +22,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 from market_discovery import SLUG, scan_catalog
-from precedents import array, epoch, gamma_by_slug, study, target_market
+from precedents import array, cached_study, epoch, gamma_by_slug, target_market
 from server import Dashboard, WALLET, data_pages, data_request, fetch_positions
 
 ROOT = Path(__file__).resolve().parent
@@ -53,6 +53,8 @@ market_history for the held outcome. Use the actual trade dates when present. Se
 execution prices from the market's historical quotes and do not infer continuous holding
 from a first entry date. Do not infer a catalyst from correlated timing alone. Explicitly
 flag historical gaps and verify any causal interpretation with dated primary sources.
+In evidence, state the most decision-relevant verified fact and its date, or say what could
+not be verified. Put its primary source first in sources.
 Timestamps are Unix seconds (UTC), and prices in the snapshot are dollars per share.
 Use 'Insufficient evidence' where warranted. Use trade_history to identify up to three concrete lessons about sizing,
 entries, or exits. Ground each one in identifiable fills or patterns. Treat buy/sell fills
@@ -318,7 +320,7 @@ def risk_exposure(wallet, target):
 
 def risk_precedents(target, scope):
     try:
-        report = study(target["slug"], scope, data_request, int(time() // 1800))
+        report = cached_study(target["slug"], scope, data_request, int(time() // 1800), False)
     except (OSError, ValueError, TypeError, KeyError, AttributeError):
         return None
     if not report:
@@ -326,7 +328,8 @@ def risk_precedents(target, scope):
     return {"scope": scope, "status": report["status"], "sampled_markets": len(report["cases"]),
             "truncated": report["truncated"],
             "horizons": [{"seconds_before_resolution": row["seconds"],
-                          **{key: row[key] for key in ("events", "right", "wrong", "ties", "average_error")}}
+                          **{key: row[key] for key in ("events", "right", "wrong", "ties", "average_error",
+                                                        "yes_count", "no_count", "majority")}}
                          for row in report["horizons"]]}
 
 
@@ -577,10 +580,40 @@ def quota_exhausted(windows):
 
 
 class Reviews:
-    def __init__(self, digest):
+    RETENTION = 3600
+    MAX_QUEUED = 2
+
+    def __init__(self, digest, path=None):
         self.digest = digest
         self.lock = Lock()
         self.jobs = {}
+        self.path = path
+        if path is not None:
+            descriptor = os.open(path, os.O_CREAT | os.O_WRONLY, 0o600)
+            os.close(descriptor)
+            os.chmod(path, 0o600)
+            with sqlite3.connect(path) as db:
+                db.execute("CREATE TABLE IF NOT EXISTS jobs (target TEXT PRIMARY KEY, payload TEXT NOT NULL, saved REAL NOT NULL)")
+                db.execute("DELETE FROM jobs WHERE saved <= ?", (time() - self.RETENTION,))
+                stored = db.execute("SELECT target, payload, saved FROM jobs").fetchall()
+            for target, payload, saved in stored:
+                job = json.loads(payload)
+                if job["state"] in ("running", "queued"):
+                    job.update(state="failed", error="The analysis service restarted. Run the analysis again.")
+                finished = monotonic() - max(0, time() - saved)
+                self.jobs[tuple(json.loads(target))] = {**job, "finished": finished,
+                                                        "started": finished - job.get("elapsed_seconds", 0)}
+
+    def persist(self, target, job):
+        if self.path is None:
+            return
+        try:
+            with sqlite3.connect(self.path) as db:
+                db.execute("DELETE FROM jobs WHERE saved <= ?", (time() - self.RETENTION,))
+                db.execute("INSERT OR REPLACE INTO jobs VALUES (?, ?, ?)",
+                           (json.dumps(target), json.dumps(self.payload(job)), time()))
+        except sqlite3.Error:
+            logging.exception("Could not save the analysis state")
 
     def authorized(self, header):
         if not re.fullmatch(r"Bearer [A-Za-z0-9_-]{43}", header):
@@ -588,26 +621,40 @@ class Reviews:
         return hmac.compare_digest(sha256(header[7:].encode()).hexdigest(), self.digest)
 
     def launch(self, wallet, mode, market="", scope=""):
+        target = wallet, mode, market, scope
         with self.lock:
-            active = next((job for job in self.jobs.values() if job["state"] == "running"), None)
-            if active:
-                if (active["wallet"], active["mode"], active.get("market", ""), active.get("scope", "")) == (wallet, mode, market, scope):
-                    return 202, self.payload(active)
-                return 409, {"error": "Another analysis is running. Try again when it finishes."}
-            job = {"state": "running", "wallet": wallet, "mode": mode, "started": monotonic(),
+            now = monotonic()
+            self.jobs = {key: job for key, job in self.jobs.items() if now - job.get("finished", now) < self.RETENTION}
+            previous = self.jobs.get(target)
+            if previous and previous["state"] in ("running", "queued"):
+                return 202, self.payload(previous)
+            if sum(job["state"] == "queued" for job in self.jobs.values()) >= self.MAX_QUEUED:
+                return 409, {"error": "The Codex queue is full. Try again after an analysis completes."}
+            job = {"state": "queued", "wallet": wallet, "mode": mode, "started": now,
                    "phase": "market" if mode == "risk" else "positions", "searches": 0}
             if mode == "risk":
                 job.update(market=market, scope=scope)
-            self.jobs[mode] = job
-            Thread(target=self.run, args=(job,), daemon=True).start()
+            self.jobs[target] = job
+            self.persist(target, job)
+            self.start_next()
             return 202, self.payload(job)
+
+    def start_next(self):
+        if any(job["state"] == "running" for job in self.jobs.values()):
+            return
+        waiting = next(((target, job) for target, job in self.jobs.items() if job["state"] == "queued"), None)
+        if waiting is not None:
+            target, job = waiting
+            job["state"] = "running"
+            self.persist(target, job)
+            Thread(target=self.run, args=(target, job), daemon=True).start()
 
     def payload(self, job):
         elapsed = int(job.get("finished", monotonic()) - job["started"])
         return {**{key: value for key, value in job.items() if key not in ("started", "finished")},
                 "elapsed_seconds": elapsed}
 
-    def run(self, active):
+    def run(self, target, active):
         def progress(**values):
             with self.lock:
                 active.update(values)
@@ -648,14 +695,17 @@ class Reviews:
             job = {"state": "failed", "error": "The analysis failed. Try again in a moment."}
         with self.lock:
             active.update(job, finished=monotonic())
+            self.persist(target, active)
+            self.start_next()
 
     def status(self, wallet, mode, market="", scope=""):
+        target = wallet, mode, market, scope
         with self.lock:
-            job = self.jobs.get(mode)
-            if not job or (job["wallet"], job.get("market", ""), job.get("scope", "")) != (wallet, market, scope):
+            job = self.jobs.get(target)
+            if not job:
                 return {"state": "idle"}
-            if job["state"] != "running" and monotonic() - job["finished"] > 3600:
-                del self.jobs[mode]
+            if job["state"] not in ("running", "queued") and monotonic() - job["finished"] > self.RETENTION:
+                del self.jobs[target]
                 return {"state": "idle"}
             return self.payload(job)
 
@@ -806,7 +856,7 @@ if __name__ == "__main__":
     if not re.fullmatch(r"[0-9a-f]{64}", digest):
         raise ValueError("Invalid review access key digest")
     with ThreadingHTTPServer(("127.0.0.1", 4313), ReviewHandler) as server:
-        server.reviews = Reviews(digest)
         state_directory = Path(os.environ.get("STATE_DIRECTORY") or os.environ.get("CODEX_HOME", "."))
+        server.reviews = Reviews(digest, state_directory / "review-jobs.sqlite3")
         server.sessions = ReviewSessions(state_directory / "web-sessions.sqlite3")
         server.serve_forever()

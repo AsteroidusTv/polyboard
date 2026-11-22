@@ -1,7 +1,7 @@
 "use strict";
 
 const DashboardWidgets = (() => {
-  const statuses = {open: "Open", won: "Won", lost: "Lost", even: "Break-even", unknown: "Incomplete"};
+  const statuses = {open: "Open", won: "Profitable", lost: "Unprofitable", even: "Break-even", unknown: "Incomplete"};
   const price = new Intl.NumberFormat("en-US", {maximumFractionDigits: 2});
   const shares = new Intl.NumberFormat("en-US", {minimumFractionDigits: 1, maximumFractionDigits: 1});
   const dollars = new Intl.NumberFormat("en-US", {style: "currency", currency: "USD"});
@@ -127,7 +127,7 @@ const DashboardWidgets = (() => {
         <div class="chart-legend" hidden></div>
         <p class="chart-note muted" role="status" hidden></p>
       </div>`;
-    const label = isPrice ? "Market price" : "Portfolio P&L";
+    const label = isPrice ? "Market price" : "Cumulative position P&L";
     const value = isPrice ? formatPrice : signedDollars.format;
     const heading = root.querySelector("h2");
     const defaultHeading = isPrice ? "Price history" : label;
@@ -594,6 +594,7 @@ const DashboardWidgets = (() => {
     const namedOutcome = !preview && position.outcome && !/^(yes|no)$/i.test(position.outcome);
     compare.hidden = !/^[a-z0-9][a-z0-9-]{0,250}$/.test(position.slug || "") ||
       preview?.compare === false || Boolean(position.is_combo || namedOutcome);
+    compare.onclick = compare.hidden ? null : preview?.onCompare || null;
     if (compare.hidden) compare.removeAttribute("href");
     else {
       const destination = {market: position.slug};

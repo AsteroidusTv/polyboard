@@ -44,6 +44,7 @@
       </div>
       <p id="trade-loading" class="muted" role="status" hidden></p>
       <div id="trade-results" hidden>
+        <p id="history-coverage" class="muted" role="status" hidden></p>
         <dl class="history-overview" id="history-overview">
           <div><dt>Closed net P&amp;L</dt><dd id="history-pnl">—</dd></div>
           <div><dt>Gross gains</dt><dd id="history-gains" class="positive">—</dd></div>
@@ -83,7 +84,7 @@
           <p id="trade-count" class="muted" role="status"></p>
           <div id="history-method" class="info-control">
             <button type="button" data-info-trigger class="info-trigger" aria-expanded="false" aria-controls="history-help"><span aria-hidden="true">ⓘ</span> P&amp;L calculation</button>
-            <p class="info-bubble" id="history-help" hidden>Gross gains and losses sum the positive and negative P&amp;L of closed positions. Profit factor divides gross gains by gross losses in absolute terms. Win rate counts wins among wins and losses. Net P&amp;L adds sales, payouts and any current or claimable value, then subtracts buy costs. The exit column shows the average sale price when available. Settlement is the payout per share held through resolution.</p>
+            <p class="info-bubble" id="history-help" hidden>Profitable and unprofitable describe your result, including early sales. Win rate counts profitable positions among positions with a gain or loss. Gross gains and losses use closed positions. Net P&amp;L uses sales, payouts and remaining value minus buy costs when available, otherwise Polymarket’s reported P&amp;L. Trading fees above are lifetime wallet totals.</p>
           </div>
         </div>
         <p id="no-matches" class="empty" hidden></p>

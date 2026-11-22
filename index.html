@@ -15,13 +15,16 @@
   <script src="/app.js" defer></script>
 </head>
 <body>
-  <main>
+  <main class="dashboard-page portfolio-page">
     <header>
+      <nav class="dashboard-nav" aria-label="Dashboard">
+        <a href="/" aria-current="page">Portfolio</a>
+        <a href="/markets">New trade</a>
+        <a href="/trades">Trade history</a>
+      </nav>
       <div class="page-title">
         <h1>Portfolio</h1>
         <div class="dashboard-actions">
-          <a class="secondary-button button-link" href="/markets">New trade</a>
-          <a class="secondary-button button-link" href="/trades">Show all trades</a>
           <button type="button" class="secondary-button toolbar-button" id="refresh"><span class="refresh-icon" aria-hidden="true">↻</span> Refresh</button>
           <button type="button" class="secondary-button toolbar-button watch-bell" data-watch-bell aria-label="Notifications" aria-haspopup="dialog"></button>
           <button type="button" class="secondary-button toolbar-button" data-open-settings aria-haspopup="dialog" aria-controls="settings-dialog"><span class="settings-icon" aria-hidden="true">⚙︎</span> Settings</button>
@@ -30,8 +33,8 @@
     </header>
 
     <dl id="totals" hidden>
-      <div><dt>Cost basis</dt><dd id="total-cost"></dd></div>
-      <div><dt>Current value</dt><dd id="total-value"></dd></div>
+      <div><dt>Open cost basis</dt><dd id="total-cost"></dd></div>
+      <div><dt>Open value</dt><dd id="total-value"></dd></div>
       <div><dt>Unrealized P&L</dt><dd id="total-pnl"></dd></div>
     </dl>
     <section id="portfolio-chart" class="portfolio-chart" aria-label="Portfolio performance" hidden></section>
@@ -41,17 +44,18 @@
           <h2 id="positions-heading">Open positions <span id="count" hidden></span></h2>
           <div id="positions-info" class="info-control" hidden>
             <button type="button" class="info-trigger" data-info-trigger aria-label="Payout and price units" aria-expanded="false" aria-controls="positions-help">ⓘ</button>
-            <p class="info-bubble" id="positions-help" hidden>Potential payout is the gross amount if the held outcome wins. Prices are in cents per share. Amounts are in dollars.</p>
+            <p class="info-bubble" id="positions-help" hidden>Open cost basis excludes entry fees. Potential payout is the gross amount if the held outcome wins. Prices are in cents per share. Amounts are in dollars.</p>
           </div>
         </div>
         <div class="section-actions">
           <p id="status" class="muted" role="status" aria-atomic="true"></p>
           <button type="button" id="scenario-toggle" class="secondary-button" aria-expanded="false" aria-controls="scenario-tools scenario-summary" hidden>Simulate outcomes</button>
           <button type="button" id="review-toggle" class="secondary-button" aria-haspopup="dialog" hidden>Run review</button>
-          <button type="button" id="find-toggle" class="secondary-button" aria-haspopup="dialog" hidden>Find markets</button>
+          <button type="button" id="find-toggle" class="secondary-button" aria-haspopup="dialog" hidden>Personalized picks</button>
         </div>
       </div>
       <p id="error" role="alert" hidden></p>
+      <p id="position-coverage" class="muted" role="status" hidden></p>
       <div id="wallet-empty" class="empty wallet-empty" hidden>
         <p>Add a public wallet address to load its portfolio.</p>
         <button type="button" data-open-settings aria-haspopup="dialog" aria-controls="settings-dialog">Set wallet</button>
@@ -76,12 +80,12 @@
             <div class="scenario-scope">
               <p id="scenario-count"></p>
               <p id="scenario-scope" class="muted"></p>
-              <p id="scenario-exit-note" class="muted">Estimate at displayed prices, before selling fees and slippage.</p>
+              <p id="scenario-exit-note" class="muted">Before selling fees and slippage.</p>
             </div>
             <dl>
-              <div><dt id="scenario-value-label">Projected portfolio</dt><dd id="scenario-value"></dd></div>
+              <div><dt id="scenario-value-label">Projected open-position value</dt><dd id="scenario-value"></dd></div>
               <div><dt id="scenario-change-label">vs. current value</dt><dd id="scenario-change"></dd></div>
-              <div><dt>Net P&amp;L</dt><dd id="scenario-pnl"></dd></div>
+              <div><dt>P&amp;L incl. reported entry fees</dt><dd id="scenario-pnl"></dd></div>
             </dl>
           </div>
           <p id="scenario-conflict" role="alert" hidden></p>

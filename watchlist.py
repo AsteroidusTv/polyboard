@@ -6,6 +6,7 @@ import os
 import re
 import secrets
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing, contextmanager
 from decimal import Decimal, InvalidOperation
 from http.cookies import CookieError, SimpleCookie
@@ -16,9 +17,10 @@ from urllib.error import URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
-from precedents import SLUG, array, epoch, gamma_by_slug, thumbnail
+from precedents import SLUG, array, epoch, gamma_by_slug, recent_market, thumbnail
 
 CHECK_INTERVAL = 60
+FRESH_SECONDS = 3 * CHECK_INTERVAL
 SESSION = re.compile(r"[A-Za-z0-9_-]{43}")
 TOKEN = re.compile(r"[0-9]{1,78}")
 KEY = re.compile(r"[A-Za-z0-9_-]+={0,2}")
@@ -146,6 +148,7 @@ class Watchlist:
         self.key_path = directory / "vapid.pem"
         self.public_key = None
         self.push = None
+        self.status_checks = {}
         with self.connect() as db:
             db.execute("PRAGMA journal_mode = WAL")
             db.executescript(SCHEMA)
@@ -199,7 +202,10 @@ class Watchlist:
         grouped = {}
         for alert in alerts:
             grouped.setdefault(alert["slug"], []).append(dict(alert))
-        watched = [{**json.loads(row["market"]), "quotes": json.loads(row["quotes"]),
+        return_at = int(time())
+        watched = [{**json.loads(row["market"]),
+                    "quotes": {token: {**quote, "fresh": return_at - quote["time"] <= FRESH_SECONDS}
+                               for token, quote in json.loads(row["quotes"]).items()},
                     "alerts": grouped.get(row["slug"], [])} for row in rows]
         notices = [{**json.loads(row["payload"]), "id": row["id"], "created": row["created"], "seen": bool(row["seen"])}
                    for row in db.execute("SELECT * FROM notices WHERE session = ? ORDER BY id DESC LIMIT 100", (session,))]
@@ -282,6 +288,8 @@ class Watchlist:
         if not watch:
             raise WatchError("Follow this market first.")
         market, quotes = json.loads(watch["market"]), json.loads(watch["quotes"])
+        if market["state"] != "open":
+            raise WatchError("This market is not currently trading.")
         token = data.get("token")
         if not any(side["token_id"] == token for side in market["outcomes"]):
             raise RequestError("Choose a valid outcome.")
@@ -296,8 +304,8 @@ class Watchlist:
         target, change, baseline = amount / 100, None, None
         if kind == "change":
             baseline = quotes.get(token, {}).get("baseline")
-            if baseline is None:
-                raise WatchError("A market price is needed to set the reference for this alert.")
+            if baseline is None or int(time()) - quotes[token]["time"] > FRESH_SECONDS:
+                raise WatchError("Wait for a fresh market price to set an alert based on price change.")
             change = str(amount)
             target = Decimal(baseline) * (1 + (amount if direction == "above" else -amount) / 100)
         if amount <= 0 or not 0 < target < 1:
@@ -314,6 +322,8 @@ class Watchlist:
     def update_prices(self, db, watch, prices, now):
         session, slug = watch["session"], watch["slug"]
         market, quotes = json.loads(watch["market"]), json.loads(watch["quotes"])
+        if market["state"] != "open":
+            return
         active = db.execute("SELECT * FROM alerts WHERE session = ? AND slug = ? AND fired IS NULL",
                             (session, slug)).fetchall()
         push = db.execute("SELECT 1 FROM subscriptions WHERE session = ?", (session,)).fetchone()
@@ -343,20 +353,49 @@ class Watchlist:
         if changed:
             db.execute("UPDATE watches SET quotes = ? WHERE session = ? AND slug = ?", (json.dumps(quotes), session, slug))
 
+    def check_markets(self, markets, now):
+        self.status_checks = {slug: stamp for slug, stamp in self.status_checks.items() if slug in markets}
+        due = sorted((slug for slug, market in markets.items() if market["state"] != "closed" and
+                      now - self.status_checks.get(slug, 0) >= 300),
+                     key=lambda slug: (self.status_checks.get(slug, 0), markets[slug].get("end_at") or float("inf")))[:12]
+
+        def check(slug):
+            try:
+                raw = recent_market(slug)
+            except (URLError, TimeoutError, ValueError):
+                return None
+            if not raw:
+                return None
+            state = "closed" if raw.get("closed") else "open" if raw.get("acceptingOrders") is True else "paused"
+            return {**markets[slug], "state": state, "end_at": epoch(raw.get("endDate")) or markets[slug].get("end_at")}
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            updates = list(pool.map(check, due))
+        for slug, market in zip(due, updates):
+            self.status_checks[slug] = now
+            if market:
+                markets[slug] = market
+        return {slug: markets[slug] for slug, market in zip(due, updates) if market}
+
     def check_prices(self):
         with self.connect() as db:
-            markets = db.execute("SELECT DISTINCT market FROM watches").fetchall()
+            rows = db.execute("SELECT slug, market FROM watches GROUP BY slug").fetchall()
+            markets = {row["slug"]: json.loads(row["market"]) for row in rows}
         if not markets:
             return
-        tokens = list(dict.fromkeys(side["token_id"] for row in markets for side in json.loads(row["market"])["outcomes"]))
+        updates = self.check_markets(markets, int(time()))
+        tokens = list(dict.fromkeys(side["token_id"] for market in markets.values() if market["state"] == "open"
+                                    for side in market["outcomes"]))
         prices = {}
         for offset in range(0, len(tokens), 100):
             prices.update(quote_batch(tokens[offset:offset + 100]))
-        if not prices:
+        if not prices and not updates:
             return
         now = int(time())
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            db.executemany("UPDATE watches SET market = ? WHERE slug = ?",
+                           ((json.dumps(market), slug) for slug, market in updates.items()))
             watches = db.execute("SELECT * FROM watches").fetchall()
             for watch in watches:
                 self.update_prices(db, watch, prices, now)

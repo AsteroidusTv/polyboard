@@ -72,8 +72,9 @@ const DashboardRisk = (() => {
       }) : await DashboardSettings.reviewRequest(endpoint, {signal});
       if (signal.aborted) return;
       DashboardSettings.reviewSession(true);
-      while (data.state === "running") {
-        status.textContent = phases[data.phase] || "Analyzing this market…";
+      while (["running", "queued"].includes(data.state)) {
+        status.textContent = data.state === "queued" ? "Queued behind another Codex analysis…" :
+          (phases[data.phase] || "Analyzing this market…");
         loadingDots.hidden = false;
         await new Promise((resolve) => setTimeout(resolve, 2300));
         if (signal.aborted) return;

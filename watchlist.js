@@ -160,9 +160,11 @@ const DashboardWatchlist = (() => {
     }));
     const primary = outcomes.findIndex((side) => side.token_id === token);
     if (primary > 0) outcomes.reverse();
+    const destination = location.search + "#watchlist/market/" + market.slug;
     DashboardWidgets.openMarket({...market, outcomes, token_id: outcomes[0].token_id,
       compare: outcomes.some((side) => /^yes$/i.test(side.label)), alert_target: target && Number(target),
-      catalog_query: location.search + "#watchlist"});
+      catalog_query: destination,
+      onCompare() { history.replaceState(history.state, "", "/markets" + destination); }});
   }
 
   function sparkline(quote) {
@@ -228,11 +230,17 @@ const DashboardWatchlist = (() => {
       quotes.append(column);
     }
     const status = Math.max(...Object.values(market.quotes).map((quote) => quote.time));
+    const fresh = Object.values(market.quotes).some((quote) => quote.fresh);
     const display = market.alerts.length ? "Alerts" : "No alerts yet";
     const alerts = el("div", undefined, "watch-rules");
-    const stats = el("p", Number.isFinite(status) ? "Price checked " + time.format(status * 1000) : "Waiting for a price", "muted watch-updated");
+    const checked = Number.isFinite(status) ? "Last quote " + time.format(status * 1000) : "Waiting for a price";
+    const marketState = market.state === "closed" ? "Closed" : market.state === "paused" ? "Trading paused"
+      : Number.isFinite(status) && !fresh ? "Price stale" : "";
+    const stats = el("p", [marketState, checked].filter(Boolean).join(" · "), "muted watch-updated");
     const heading = el("div", undefined, "watch-inline watch-rules-head");
-    heading.append(el("strong", display), button("Add alert", () => openAlert(market)));
+    const add = button("Add alert", () => openAlert(market));
+    add.hidden = market.state !== "open";
+    heading.append(el("strong", display), add);
     alerts.append(heading);
     const error = el("p", undefined, "negative");
     error.setAttribute("role", "alert");
@@ -241,9 +249,12 @@ const DashboardWatchlist = (() => {
       if (!side) continue;
       const line = el("div", undefined, "watch-rule watch-inline");
       const group = el("div");
-      group.append(el("strong", alertLabel(rule, side)), el("small", rule.fired ? "Triggered" : "Watching", rule.fired ? "positive" : "muted"));
+      const quote = market.quotes[rule.token];
+      const label = rule.fired ? "Triggered" : market.state === "closed" ? "Market closed"
+        : market.state === "paused" ? "Trading paused" : quote?.fresh ? "Watching" : "Waiting for a fresh price";
+      group.append(el("strong", alertLabel(rule, side)), el("small", label, rule.fired ? "positive" : "muted"));
       const options = el("div", undefined, "watch-rule-actions");
-      if (rule.fired) {
+      if (rule.fired && market.state === "open") {
         const rearm = button("Rearm", () => perform(rearm, () => change({action: "rearm", id: rule.id}), error), "text-button");
         options.append(rearm);
       }
@@ -315,6 +326,7 @@ const DashboardWatchlist = (() => {
   function openAlert(market, token, fromFollow = false) {
     const body = alertBody(market);
     body.innerHTML = `<form class="watch-alert-form">
+      <p class="muted">Alerts trigger when a sampled midpoint crosses the threshold. Prices are checked about once a minute.</p>
       <div class="watch-alert-fields">
         <div><label for="watch-outcome">Outcome</label><select id="watch-outcome"></select></div>
         <div><label for="watch-condition">Condition</label><select id="watch-condition">
@@ -461,7 +473,7 @@ const DashboardWatchlist = (() => {
   }
 
   function view() {
-    return location.hash === "#watchlist" || /^#watchlist\/alerts\/\d+$/.test(location.hash) ? "watchlist" : "explore";
+    return /^#watchlist(?:\/alerts\/\d+|\/market\/[a-z0-9-]+)?$/.test(location.hash) ? "watchlist" : "explore";
   }
 
   function setView(next) {
@@ -488,6 +500,13 @@ const DashboardWatchlist = (() => {
 
   function openLinkedNotice() {
     if (!loaded || !panes) return;
+    const slug = location.hash.match(/^#watchlist\/market\/([a-z0-9-]+)$/)?.[1];
+    if (slug) {
+      const market = state.watches.find((item) => item.slug === slug);
+      if (market && !document.querySelector("#position-dialog[open]")) openMarket(market);
+      history.replaceState(history.state, "", "/markets" + location.search + "#watchlist");
+      return;
+    }
     const id = location.hash.match(/^#watchlist\/alerts\/(\d+)$/)?.[1];
     if (!id || id === lastNotice) return;
     lastNotice = id;

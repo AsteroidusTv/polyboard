@@ -57,6 +57,7 @@ const marketNames = new Intl.Collator("en-US", {sensitivity: "base", numeric: tr
 const color = (value) => value > 0 ? "positive" : value < 0 ? "negative" : "";
 const displayPrice = (price) => cents.format(price * 100) + " ¢";
 const sum = (positions, amount) => positions.reduce((total, position) => total + amount(position), 0);
+const available = (value, format) => Number.isFinite(value) ? format(value) : "—";
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -93,7 +94,7 @@ function syncScenario() {
       : exclude ? "Checked positions only" : "Unchecked positions at $0")
     : "Checked positions only";
   byId("scenario-exit-note").hidden = !sellOthers;
-  byId("scenario-value-label").textContent = exclude ? "Projected value" : "Projected portfolio";
+  byId("scenario-value-label").textContent = exclude ? "Projected checked value" : "Projected open-position value";
   byId("scenario-change-label").textContent = exclude ? "vs. checked value" : "vs. current value";
   byId("scenario-value").textContent = showAmounts ? dollars.format(projected) : "—";
   for (const [id, amount] of [["scenario-change", projected - current], ["scenario-pnl", projected - cost]]) {
@@ -155,8 +156,8 @@ function reviewEntryLine(position) {
 
 function historyCoverage(history) {
   if (!history || history.state === "unavailable") return "Trade history unavailable";
-  let coverage = countNumber.format(history.fetched) + " trade fills used";
-  if (history.detailed < history.fetched) coverage += " · Older fills summarized";
+  let coverage = countNumber.format(history.detailed) + " trade fills in detail";
+  if (history.detailed < history.fetched) coverage += " · " + countNumber.format(history.fetched - history.detailed) + " summarized";
   if (history.state === "partial") coverage += " · Partial history";
   return coverage;
 }
@@ -164,15 +165,13 @@ function historyCoverage(history) {
 function renderReview({snapshot, report}) {
   const overview = element("div", "report-overview");
   const time = new Date(snapshot.as_of).toLocaleString("en-US", {dateStyle: "medium", timeStyle: "short"});
-  overview.append(
-    element("p", "muted report-prices", time + " · " + snapshot.positions.length + " of " + snapshot.open_count + " positions reviewed"),
-    element("p", "", report.summary),
-    element("p", "muted report-prices", historyCoverage(snapshot.trade_history))
-  );
+  overview.append(element("p", "muted report-prices", time + " · " + snapshot.positions.length + " of " + snapshot.open_count + " open positions reviewed"),
+    element("p", "muted report-prices", historyCoverage(snapshot.trade_history)));
   if (snapshot.positions.some((position) => position.market_history)) {
     const covered = snapshot.positions.filter((position) => position.market_history?.observations >= 2).length;
     overview.append(element("p", "muted report-prices", "Price history available for " + covered + " of " + snapshot.positions.length + " positions"));
   }
+  overview.append(element("p", "", report.summary));
   appendList(overview, "Priorities", report.priorities);
   appendList(overview, "Watchlist", report.watchlist);
   appendList(overview, "Lessons from past trades", report.history_insights || []);
@@ -182,6 +181,7 @@ function renderReview({snapshot, report}) {
     const card = element("section", "report-position");
     const details = element("dl");
     for (const [label, value] of [
+      ["Evidence", holding.evidence],
       ["Price and entry history", holding.price_context],
       ["Case against holding", holding.case_against],
       ["Counterargument", holding.counterargument],
@@ -414,11 +414,12 @@ function showReviewProgress(data) {
   const scanned = data.phase === "catalog" && data.markets_scanned ? " · " + countNumber.format(data.markets_scanned) + " markets checked" : "";
   const message = data.state === "complete" ? (reviewMode === "discovery" ? "Market search complete." : "Review complete.")
     : data.state === "failed" ? data.error || "The review failed."
+    : data.state === "queued" ? "Queued behind another Codex analysis…"
     : (stages[data.phase] || stages.positions) + trades + scanned + searches;
   if (reviewProgress.textContent !== message) reviewProgress.textContent = message;
   const elapsed = data.elapsed_seconds ?? 0;
   byId("review-elapsed").textContent = elapsed < 60 ? elapsed + "s" : Math.floor(elapsed / 60) + "m " + (elapsed % 60) + "s";
-  reviewDots.hidden = data.state !== "running";
+  reviewDots.hidden = !["running", "queued"].includes(data.state);
   reviewActivity.hidden = false;
   renderUsage(data);
 }
@@ -454,7 +455,7 @@ async function monitorReview(start) {
     }) : await DashboardSettings.reviewRequest(query);
     if (attempt !== reviewAttempt) return;
     DashboardSettings.reviewSession(true);
-    while (data.state === "running" && attempt === reviewAttempt) {
+    while (["running", "queued"].includes(data.state) && attempt === reviewAttempt) {
       showReviewProgress(data);
       await new Promise((resolve) => setTimeout(resolve, 2500));
       if (attempt !== reviewAttempt) return;
@@ -536,7 +537,7 @@ function marketCell(position) {
   const meta = element("div", "meta");
   const side = position.outcome === "Yes" ? " yes" : position.outcome === "No" ? " no" : "";
   meta.append(element("span", "side" + side, position.outcome),
-    element("span", "", positionShares.format(position.current_size) + " shares"));
+    element("span", "", available(position.current_size, (size) => positionShares.format(size) + " shares")));
   details.append(DashboardWidgets.marketTitle(position, () => {
     DashboardWidgets.openPosition({...position, status: "open"}, displayedWallet);
   }), meta);
@@ -548,16 +549,17 @@ function marketCell(position) {
 function positionRow(position) {
   const row = element("tr");
   const prices = element("span", "position-prices");
-  prices.append(element("span", "muted", cents.format(position.avg_price * 100) + "¢"),
-    element("span", "muted", "→"), element("span", "", cents.format(position.current_price * 100) + "¢"));
-  const percent = position.entry_cost_usdc > 0 ? " (" + signedPercent.format(position.percent_pnl / 100) + ")" : "";
+  prices.append(element("span", "muted", available(position.avg_price, displayPrice)),
+    element("span", "muted", "→"), element("span", "", available(position.current_price, displayPrice)));
+  const percent = position.entry_cost_usdc > 0 && Number.isFinite(position.percent_pnl)
+    ? " (" + signedPercent.format(position.percent_pnl / 100) + ")" : "";
   row.append(
     marketCell(position),
     cell("Avg → Now", prices),
-    cell("Cost basis", dollars.format(position.entry_cost_usdc)),
-    cell("Potential payout", dollars.format(position.current_size)),
-    cell("Value & P&L", element("strong", "", dollars.format(position.current_value)),
-      element("span", "pnl " + color(position.unrealized_pnl), signedDollars.format(position.unrealized_pnl) + percent))
+    cell("Cost basis", available(position.entry_cost_usdc, dollars.format)),
+    cell("Potential payout", available(position.current_size, dollars.format)),
+    cell("Value & P&L", element("strong", "", available(position.current_value, dollars.format)),
+      element("span", "pnl " + color(position.unrealized_pnl), available(position.unrealized_pnl, signedDollars.format) + percent))
   );
   return row;
 }
@@ -565,6 +567,10 @@ function positionRow(position) {
 function renderPositionRows() {
   const direction = sortDirection === "ascending" ? 1 : -1;
   const sorted = [...openPositions].sort((a, b) => {
+    if (sortKey !== "title") {
+      if (!Number.isFinite(a[sortKey])) return Number.isFinite(b[sortKey]) ? 1 : 0;
+      if (!Number.isFinite(b[sortKey])) return -1;
+    }
     const order = sortKey === "title" ? marketNames.compare(a.title, b.title) : a[sortKey] - b[sortKey];
     return direction * order;
   });
@@ -600,33 +606,40 @@ function changePositionSort(key) {
 }
 
 function render(positions) {
+  if (!Array.isArray(positions)) throw new Error("Polymarket returned unreadable positions.");
   const numericFields = ["current_size", "avg_price", "current_price", "entry_cost_usdc", "current_value", "unrealized_pnl"];
-  if (!Array.isArray(positions) || !positions.every((position) =>
-    position && numericFields.every((field) => Number.isFinite(position[field])) &&
-    (position.entry_cost_usdc <= 0 || Number.isFinite(position.percent_pnl)) &&
-    typeof position.title === "string" && typeof position.outcome === "string" &&
-    typeof position.token_id === "string" && position.token_id)) {
-    throw new Error("Polymarket returned incomplete position data.");
-  }
-  openPositions = positions;
+  openPositions = positions.filter((position) => typeof position?.token_id === "string" && position.token_id)
+    .map((position) => ({...position, title: position.title || "Unknown market", outcome: position.outcome || "—"}));
+  const omitted = positions.length - openPositions.length;
+  const incomplete = openPositions.filter((position) => numericFields.some((field) => !Number.isFinite(position[field]))).length;
+  const notice = byId("position-coverage");
+  notice.textContent = [omitted ? `${omitted} positions could not be identified.` : "",
+    incomplete ? `${incomplete} positions have missing prices or amounts.` : ""].filter(Boolean).join(" ");
+  notice.hidden = !notice.textContent;
+  positions = openPositions;
+  const totalFor = (key) => !omitted && positions.every((position) => Number.isFinite(position[key]))
+    ? sum(positions, (position) => position[key]) : null;
+  const scenarioReady = !omitted && ["current_size", "entry_cost_usdc", "current_value"].every((key) => totalFor(key) !== null);
   const liveTokens = new Set(positions.map((position) => position.token_id));
   for (const token of winningTokens) {
     if (!liveTokens.has(token)) winningTokens.delete(token);
   }
   conflict.hidden = true;
-  const pnl = sum(positions, (position) => position.unrealized_pnl);
+  const pnl = totalFor("unrealized_pnl");
   renderPositionRows();
-  byId("total-cost").textContent = dollars.format(sum(positions, (position) => position.entry_cost_usdc));
-  byId("total-value").textContent = dollars.format(sum(positions, (position) => position.current_value));
-  byId("total-pnl").textContent = signedDollars.format(pnl);
+  byId("total-cost").textContent = available(totalFor("entry_cost_usdc"), dollars.format);
+  byId("total-value").textContent = available(totalFor("current_value"), dollars.format);
+  byId("total-pnl").textContent = available(pnl, signedDollars.format);
   byId("total-pnl").className = color(pnl);
   count.textContent = positions.length;
   count.hidden = false;
-  positionsInfo.hidden = scenarioToggle.hidden = totals.hidden = results.hidden = positions.length === 0;
+  positionsInfo.hidden = totals.hidden = results.hidden = positions.length === 0;
+  scenarioToggle.hidden = !scenarioReady || !positions.length;
+  if (!scenarioReady && positions.length) notice.append(" Some amounts are needed to simulate outcomes.");
   reviewToggle.hidden = !directReview || positions.length === 0;
   findToggle.hidden = !directReview;
-  empty.hidden = positions.length !== 0;
-  if (!positions.length) setScenarioOpen(false);
+  empty.hidden = positions.length !== 0 || omitted > 0;
+  if (scenarioToggle.hidden) setScenarioOpen(false);
   if (!byId("scenario-summary").hidden) syncScenario();
 }
 
@@ -640,6 +653,7 @@ async function load() {
   byId("wallet-empty").hidden = true;
   refresh.disabled = true;
   if (displayedWallet !== address) {
+    byId("position-coverage").hidden = true;
     displayedWallet = updatedAt = "";
     openPositions = [];
     winningTokens.clear();
@@ -707,12 +721,12 @@ scenarioClear.addEventListener("click", () => {
 });
 function openReview(mode) {
   const discovery = mode === "discovery";
-  byId("review-title").textContent = discovery ? "Market discovery" : "Portfolio review";
+  byId("review-title").textContent = discovery ? "Personalized picks" : "Portfolio review";
   byId("review-help").textContent = discovery
     ? "Find open markets that fit your trade history and explore a few unfamiliar ideas."
     : "Codex checks entry dates, price history, liquidity, and recent sources for each position.";
   byId("review-wallet").textContent = displayedWallet;
-  reviewRun.textContent = discovery ? "Find markets" : "Run review";
+  reviewRun.textContent = discovery ? "Find picks" : "Run review";
   const changed = reviewWallet !== displayedWallet || reviewMode !== mode;
   if (changed) {
     reviewWallet = displayedWallet;

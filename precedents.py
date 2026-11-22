@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from functools import lru_cache
 from math import isfinite
+from threading import Lock
 from time import time
 from typing import NamedTuple
 from urllib.error import HTTPError, URLError
@@ -46,6 +47,8 @@ RELEASE = re.compile(r"\b(?:release[sd]?|launch(?:es|ed)?)\b")
 DEADLINE = re.compile(r"\b(?:by|before|prior to|in|on) (?:(?:the )?end of |q[1-4]\b|20\d{2}\b|"
                       r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b|\d)")
 THRESHOLD = re.compile(r"\b(above|below|over|under|reach|hit|dip to|drop to|fall to|rise to)\s+\$?\d")
+TEMPERATURE = re.compile(r"(-?\d+(?:\.\d+)?)\s*°\s*([cf])\b", re.I)
+PRICE_LEVEL = re.compile(r"(?:\$|↑|↓)\s*(\d[\d,]*(?:\.\d+)?)")
 BROADER_MATCHES = {"Other referendum", "Related question and topic", "Territorial control in another conflict",
                    "Same election type in another setting", "Other ceasefire markets"}
 UPSTREAM = (URLError, TimeoutError, ValueError, TypeError, KeyError, AttributeError)
@@ -504,15 +507,22 @@ def score(cases, seconds):
     events = len({case["event"] for case, _ in rows})
     right = sum(quote["favorite_correct"] is True for _, quote in rows)
     wrong = sum(quote["favorite_correct"] is False for _, quote in rows)
+    yes_count = sum(case["outcome"] for case, _ in rows)
+    majority = max(yes_count, count - yes_count)
     output = {"seconds": seconds, "count": count, "events": events, "average_error": None,
               "right": right, "wrong": wrong, "ties": count - right - wrong,
+              "yes_count": yes_count, "no_count": count - yes_count,
+              "majority": majority, "net_correct": right - majority,
               "brier_skill": None, "favored_won": None, "calibration": []}
     if count < 5 or events < 3:
         return output
     error = sum(abs(case["outcome"] - quote["price"]) for case, quote in rows) / count
     brier = sum((case["outcome"] - quote["price"]) ** 2 for case, quote in rows) / count
-    output.update(average_error=round(error * 100, 2), brier_skill=round(100 * (1 - brier / .25), 2),
+    output.update(average_error=round(error * 100, 2),
                   favored_won=round(100 * right / (right + wrong), 1) if right + wrong else None)
+    if not 0 < yes_count < count:
+        return output
+    output["brier_skill"] = round(100 * (1 - brier / .25), 2)
     for low in range(0, 100, 20):
         band = [(case, quote) for case, quote in rows if low <= quote["price"] * 100 < low + 20 or
                 (low == 80 and quote["price"] == 1)]
@@ -525,19 +535,43 @@ def score(cases, seconds):
     return output
 
 
+def comparable_threshold(row):
+    label, title = row["label"], row["title"]
+    value = TEMPERATURE.search(label) or TEMPERATURE.search(title)
+    if value:
+        wording = clean(label + " " + title)
+        direction = ("below" if re.search(r"\b(?:below|lower|less|at most)\b", wording) else
+                     "above" if re.search(r"\b(?:above|higher|over|at least|more)\b", wording) else "exact")
+        number, unit = value.groups()
+        celsius = (float(number) - 32) * 5 / 9 if unit.lower() == "f" else float(number)
+        return "temperature", direction, celsius
+    form = row.get("form")
+    if form and form.kind == "threshold" and (value := PRICE_LEVEL.search(label) or PRICE_LEVEL.search(title)):
+        return "price", form.subject, float(value[1].replace(",", ""))
+    return None
+
+
 def comparison_sample(entries, target, limit, broader_slots):
     # Complete one pass across distinct events before taking another threshold from any of them.
     focused, broader = [], []
     event_counts = {}
+    reference = comparable_threshold(target)
+
+    def relevance(entry):
+        row = entry[0]
+        candidate = comparable_threshold(row) if reference else None
+        if not candidate or candidate[:2] != reference[:2]:
+            return 1, 0
+        return 0, abs(reference[2] - candidate[2])
 
     def diversity(entry):
         row, reason, *_ = entry
         key = (reason in BROADER_MATCHES, row["event"])
         number = event_counts.get(key, 0)
         event_counts[key] = number + 1
-        return number, not similar_duration(target, row)
+        return number, not similar_duration(target, row), *relevance(entry)
 
-    for entry in sorted(entries, key=diversity):
+    for entry in sorted(sorted(entries, key=relevance), key=diversity):
         group = broader if entry[1] in BROADER_MATCHES else focused
         group.append(entry)
     focused_count = min(len(focused), limit - min(len(broader), broader_slots))
@@ -545,7 +579,12 @@ def comparison_sample(entries, target, limit, broader_slots):
 
 
 @lru_cache(maxsize=64)
-def study(slug, scope, api, bucket):
+def study(slug, scope, api, bucket, extended=True):
+    if extended:
+        base = cached_study(slug, scope, api, bucket, False)
+        if not base or not base["extra_horizons"]:
+            return base
+        return study_prices(base, base["extra_horizons"], api)
     target = target_market(slug)
     if not target:
         return None
@@ -558,7 +597,7 @@ def study(slug, scope, api, bucket):
         target_resolution = settlement(target, record)
         if not target_resolution:
             return {"target": overview, "cases": [], "horizons": [score([], offset) for offset in defaults],
-                    "default_horizons": defaults,
+                    "default_horizons": defaults, "extra_horizons": (),
                     "matched": 0, "unusable": 0, "truncated": False, "status": "target_unverified"}
         cutoff, outcome = target_resolution
         overview["resolution"] = {"at": cutoff, "outcome": "Yes" if outcome else "No"}
@@ -600,37 +639,67 @@ def study(slug, scope, api, bucket):
     selected = comparison_sample(eligible, target, MAX_CASES, 6)
     selected.sort(key=lambda entry: (entry[1] not in BROADER_MATCHES,
                                      similar_duration(target, entry[0]), entry[2]), reverse=True)
-    offsets = defaults + extended_offsets(defaults, selected)
-    cases = []
-    failed = 0
-    with ThreadPoolExecutor(max_workers=10) as pool:
-        for row, reason, resolved, outcome in selected:
-            case = {**summary(row), "condition": row["condition"], "event": row["event"],
-                    "reason": reason, "broader": reason in BROADER_MATCHES,
-                    "resolved_at": resolved, "outcome": outcome, "prices": {}}
-            for offset in offsets:
-                case["prices"][str(offset)] = pool.submit(sample_price, api, row, resolved, outcome, offset)
-            cases.append(case)
-        for case in cases:
-            for day, job in case["prices"].items():
-                try:
-                    case["prices"][day] = job.result()
-                except UPSTREAM:
-                    failed += 1
-                    case["prices"][day] = {"missing": "Polymarket price request failed"}
-    horizons = [score(cases, offset) for offset in offsets]
-    horizons = [row for row in horizons if row["seconds"] in defaults or row["count"] > 0]
-    status = ("useful" if any(row["count"] >= 12 and row["events"] >= 5 for row in horizons)
-              else "limited" if any(row["average_error"] is not None for row in horizons)
-              else "insufficient" if cases else "no_cases")
-    return {"target": overview, "cases": cases, "horizons": horizons, "default_horizons": defaults, "matched": len(eligible),
+    cases = [{**summary(row), **{key: row[key] for key in ("condition", "listed", "closed_at", "yes_token")},
+              "reason": reason, "broader": reason in BROADER_MATCHES,
+              "resolved_at": resolved, "outcome": outcome, "prices": {}}
+             for row, reason, resolved, outcome in selected]
+    base = {"target": overview, "cases": cases, "horizons": [], "default_horizons": defaults,
+            "extra_horizons": extended_offsets(defaults, selected), "matched": len(eligible),
             "unusable": len(candidates) - len(eligible) - excluded, "other_duration": excluded,
-            "truncated": more or len(eligible) > MAX_CASES,
-            "failed_quotes": failed, "status": status}
+            "truncated": more or len(eligible) > MAX_CASES, "failed_quotes": 0}
+    return study_prices(base, defaults, api)
 
 
-def compare_markets(slug, scope, wallet, api, pages):
-    result = study(slug, scope, api, int(time() // 1800))
+def study_prices(base, offsets, api):
+    cases = [{**case, "prices": dict(case["prices"])} for case in base["cases"]]
+    failed = base["failed_quotes"]
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        jobs = []
+        for case in cases:
+            for offset in offsets:
+                job = pool.submit(sample_price, api, case, case["resolved_at"], case["outcome"], offset)
+                jobs.append((case, str(offset), job))
+        for case, offset, job in jobs:
+            try:
+                case["prices"][offset] = job.result()
+            except UPSTREAM:
+                failed += 1
+                case["prices"][offset] = {"missing": "Polymarket price request failed"}
+    horizons = base["horizons"] + [score(cases, offset) for offset in offsets]
+    horizons = sorted((row for row in horizons if row["seconds"] in base["default_horizons"] or row["count"]),
+                      key=lambda row: row["seconds"])
+    supported = [row for row in horizons if row["average_error"] is not None]
+    status = ("useful" if any(row["count"] >= 12 and row["events"] >= 5 and
+                              min(row["yes_count"], row["no_count"]) >= 3 and row["net_correct"] > 0
+                              for row in supported)
+              else "one_sided" if supported and all(not row["yes_count"] or not row["no_count"] for row in supported)
+              else "limited" if supported
+              else "insufficient" if cases else "no_cases")
+    return {**base, "cases": cases, "horizons": horizons, "failed_quotes": failed, "status": status}
+
+
+_study_locks = [Lock() for _ in range(64)]
+
+
+def cached_study(slug, scope, api, bucket, extended):
+    locks = _extended_locks if extended else _study_locks
+    with locks[hash((slug, scope)) % len(locks)]:
+        return study(slug, scope, api, bucket, extended)
+
+
+_extended_locks = [Lock() for _ in range(64)]
+
+
+@lru_cache(maxsize=32)
+def traded_conditions(wallet, pages, bucket):
+    return frozenset(condition
+                     for rows, _ in pages("trades", {"user": wallet, "limit": 1000, "start": 1})
+                     for row in rows
+                     if isinstance(condition := row.get("condition_id"), str) and CONDITION.fullmatch(condition))
+
+
+def compare_markets(slug, scope, wallet, api, pages, extended=True):
+    result = cached_study(slug, scope, api, int(time() // 1800), extended)
     if not result:
         return None
     target = result["target"]
@@ -645,11 +714,11 @@ def compare_markets(slug, scope, wallet, api, pages):
     wallet_available = bool(wallet)
     if wallet and result["cases"]:
         try:
-            for rows, _ in pages("trades", {"user": wallet.lower(), "limit": 1000, "start": 1}):
-                traded.update(row.get("condition_id") for row in rows)
+            traded = traded_conditions(wallet.lower(), pages, int(time() // 60))
         except UPSTREAM:
             wallet_available = False
     return {**result, "target": {**target, "closed": context["state"] == "closed", "context": context},
             "scope": scope, "wallet_available": wallet_available,
-            "cases": [{**row, "traded": row["condition"] in traded if wallet_available else None}
+            "cases": [{**{key: value for key, value in row.items() if key not in ("yes_token", "listed", "closed_at")},
+                       "traded": row["condition"] in traded if wallet_available else None}
                       for row in result["cases"]]}

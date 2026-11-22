@@ -106,6 +106,13 @@
 .market-quote[data-side="yes"] { color: var(--positive); }
 .market-quote[data-side="no"] { color: var(--negative); }
 .market-quote-label { max-width: 100%; overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; font-size: .65rem; }
+.market-card-options :is(.market-preview-label, .market-quote-label) {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .market-quote strong { font-weight: 650; }
 .market-card-single .market-quote {
   grid-template-columns: minmax(0, 1fr) auto;

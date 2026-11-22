@@ -124,7 +124,12 @@ function tradeRow(trade) {
   const row = element("tr");
   const action = trade.side === "BUY" ? "Buy" : trade.side === "SELL" ? "Sell" : "—";
   const actionClass = trade.side === "BUY" ? " yes" : trade.side === "SELL" ? " no" : "";
-  row.append(marketCell(trade), cell("Side", element("span", "side" + actionClass, action)),
+  const fill = {...trade, type: "TRADE", usdc_size: trade.gross};
+  const title = /^\d{1,78}$/.test(trade.token_id || "") ? DashboardWidgets.marketTitle(trade, () => {
+    const summary = historyCache.get("positions")?.rows.find((position) => position.token_id === trade.token_id);
+    DashboardWidgets.openPosition({...trade, executions: [fill]}, DashboardSettings.wallet, {fill, summary});
+  }) : undefined;
+  row.append(marketCell(trade, title), cell("Side", element("span", "side" + actionClass, action)),
     cell("Price", displayPrice(trade.price)), cell("Shares", displayShares(trade.size)),
     cell("Gross amount", formatMoney(trade.gross)), cell("Date", displayDate(trade.timestamp, true)));
   return row;
@@ -187,7 +192,7 @@ function updateOverview(fees) {
   pnl.textContent = formatMoney(total, signedDollars);
   byId("history-gains").textContent = formatMoney(gains, signedDollars);
   byId("history-losses").textContent = formatMoney(losses, signedDollars);
-  byId("history-record").textContent = counts.format(won.length) + " won · " + counts.format(lost.length) + " lost";
+  byId("history-record").textContent = counts.format(won.length) + " profit · " + counts.format(lost.length) + " loss";
   byId("history-win-rate").textContent = decided ? winRate.format(won.length / decided) : "—";
   byId("history-profit-factor").textContent = losses < 0 ? factor.format(gains / -losses) + "×" : "—";
   byId("history-open").textContent = counts.format(records.filter((row) => row.status === "open").length);
@@ -212,7 +217,7 @@ function configureView() {
   tradeTable.classList.toggle("is-position-history", grouped);
 }
 
-function renderTrades() {
+function renderTrades(keepRows = false) {
   const grouped = view === "positions";
   const query = searchableTitle(search.value.trim());
   const activeSide = side.value;
@@ -238,14 +243,15 @@ function renderTrades() {
   const headings = byId("trade-headings").children;
   for (const heading of headings) heading.removeAttribute("aria-sort");
   headings[column].setAttribute("aria-sort", direction === 1 ? "ascending" : "descending");
+  const restoreRows = keepRows ? Math.max(pageSize, tradeRows.childElementCount) : pageSize;
   tradeRows.replaceChildren();
-  appendTrades();
+  appendTrades(restoreRows);
 }
 
-function appendTrades() {
+function appendTrades(limit = pageSize) {
   if (results.hidden) return;
   const start = tradeRows.childElementCount;
-  const end = Math.min(start + pageSize, matching.length);
+  const end = Math.min(start + (typeof limit === "number" ? limit : pageSize), matching.length);
   tradeRows.append(...matching.slice(start, end).map(view === "positions" ? positionRow : tradeRow));
   const label = view === "positions" ? "position" : "trade";
   const total = counts.format(matching.length) + " " + label + (matching.length === 1 ? "" : "s");
@@ -264,8 +270,11 @@ async function loadTrades(force = false) {
   if (force || loadedWallet !== address) historyCache.clear();
   loadedWallet = address;
   const group = view === "positions";
+  const requestedView = view;
   let fetched = [];
   let fees = null;
+  let partial = false;
+  let rendered = false;
   const seen = new Set();
   let cursor = null;
   byId("wallet-empty").hidden = true;
@@ -273,13 +282,23 @@ async function loadTrades(force = false) {
   results.hidden = true;
   observeTradeScroll(false);
   error.hidden = true;
+  const coverage = byId("history-coverage");
+  coverage.hidden = true;
   loading.hidden = false;
   loading.textContent = group ? "Loading position history…" : "Loading executions…";
   const cached = historyCache.get(view);
+  function reveal(keepRows = false) {
+    records = fetched;
+    results.hidden = false;
+    updateOverview(fees);
+    renderTrades(keepRows);
+    rendered = true;
+  }
   try {
     if (cached) {
       fetched = cached.rows;
       fees = cached.fees;
+      partial = cached.partial;
     } else if (group) {
       const query = new URLSearchParams({wallet: address});
       if (force) query.set("fresh", "1");
@@ -291,6 +310,7 @@ async function loadTrades(force = false) {
       if (!Array.isArray(data.positions)) throw new Error("Polymarket returned unreadable positions.");
       fetched = data.positions;
       fees = data.trading_fees;
+      partial = Boolean(data.partial);
     } else {
       do {
         const params = new URLSearchParams({wallet: address});
@@ -299,6 +319,7 @@ async function loadTrades(force = false) {
           signal: AbortSignal.any([request.signal, AbortSignal.timeout(15000)])
         });
         const batch = await response.json();
+        if (request !== currentRequest) return;
         if (!response.ok) throw new Error(batch.error || "Unable to load trades.");
         if (!Array.isArray(batch.trades) || !batch.trades.every((trade) => trade && typeof trade === "object")) {
           throw new Error("Polymarket returned an unreadable trade page.");
@@ -313,7 +334,12 @@ async function loadTrades(force = false) {
             throw new Error("Polymarket returned an invalid history cursor.");
           }
           seen.add(cursor);
-          loading.textContent = "Loading executions… " + counts.format(fetched.length) + " trades retrieved.";
+        }
+        if (cursor) {
+          coverage.textContent = counts.format(fetched.length) + " executions loaded. Search and sorting use the available rows while the rest load.";
+          coverage.hidden = false;
+          loading.hidden = true;
+          if (!rendered || !tradeRows.contains(document.activeElement)) reveal(rendered);
         }
       } while (cursor !== null);
     }
@@ -330,14 +356,22 @@ async function loadTrades(force = false) {
   refresh.disabled = false;
   loading.hidden = true;
   if (fetched.length || error.hidden) {
-    records = fetched;
-    results.hidden = false;
-    updateOverview(fees);
-    renderTrades();
+    if (rendered && tradeRows.contains(document.activeElement)) {
+      records = fetched;
+      const currentView = view;
+      tradeRows.addEventListener("focusout", () => {
+        queueMicrotask(() => {
+          if (view === currentView && records === fetched && !tradeRows.contains(document.activeElement)) renderTrades(true);
+        });
+      }, {once: true});
+    } else reveal(rendered);
     if (cached) DashboardWidgets.softUpdate(results);
   }
+  coverage.textContent = partial ? "Partial history. Statistics cover the available positions only."
+    : !error.hidden && !group && fetched.length ? "Search and sorting cover the executions loaded so far." : "";
+  coverage.hidden = !coverage.textContent;
   if (error.hidden) {
-    historyCache.set(view, {rows: fetched, fees});
+    historyCache.set(requestedView, {rows: fetched, fees, partial});
   }
 }
 

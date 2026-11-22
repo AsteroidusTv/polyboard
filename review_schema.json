@@ -45,6 +45,9 @@
           "counterargument": {
             "type": "string"
           },
+          "evidence": {
+            "type": "string"
+          },
           "trigger": {
             "type": "string"
           },
@@ -74,6 +77,7 @@
           "price_context",
           "case_against",
           "counterargument",
+          "evidence",
           "trigger",
           "sources"
         ]

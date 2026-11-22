@@ -68,7 +68,7 @@
             <button class="secondary-button" type="button" id="precedent-horizon-toggle" aria-haspopup="dialog" aria-controls="precedent-horizons" hidden>Horizons</button>
             <div id="history-method" class="info-control">
               <button type="button" class="info-trigger" data-info-trigger aria-expanded="false" aria-controls="precedent-help"><span aria-hidden="true">ⓘ</span> Method</button>
-              <p class="info-bubble" id="precedent-help" hidden>Default horizons follow the scheduled market duration. D means days, H hours, M minutes and S seconds before official Polymarket resolution. Above 50%, Yes is favored. Below 50%, No is favored. A 50% price has no favorite. The signed gap is the final Yes value minus the historical Yes price. Each quote must come from a complete observation before the cutoff and be recent for that horizon. Average error and calibration require five markets across three events.</p>
+              <p class="info-bubble" id="precedent-help" hidden>Horizons count back from official resolution. The result may have been public earlier. The majority baseline shows how often always choosing the most common outcome would have been right in this sample. Select a price to see its observation time and cutoff.</p>
             </div>
           </div>
         </div>
@@ -103,6 +103,7 @@
       <div class="watch-dialog-body">
         <form id="precedent-horizon-form">
           <p class="muted">Choose up to four columns. Coverage shows how many markets have a price.</p>
+          <p id="precedent-horizon-status" class="muted" role="status" hidden></p>
           <fieldset id="precedent-horizon-choices" aria-label="Comparison horizons"></fieldset>
           <div class="watch-inline watch-form-actions">
             <button type="button" class="text-button" id="precedent-horizon-default">Reset to defaults</button>
@@ -110,6 +111,13 @@
           </div>
         </form>
       </div>
+    </dialog>
+    <dialog id="precedent-quote" class="watch-dialog" aria-labelledby="precedent-quote-title">
+      <header class="watch-dialog-head">
+        <h2 id="precedent-quote-title">Historical quote</h2>
+        <form method="dialog"><button type="submit" class="text-button activity-dismiss" aria-label="Close historical quote">×</button></form>
+      </header>
+      <div class="watch-dialog-body"><dl id="precedent-quote-details"></dl></div>
     </dialog>
     <dialog id="risk-dialog" aria-labelledby="risk-title">
       <header class="review-heading">

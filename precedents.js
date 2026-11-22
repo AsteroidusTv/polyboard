@@ -19,7 +19,11 @@ const contextDate = new Intl.DateTimeFormat("en-US", {month: "short", day: "nume
   hour: "numeric", minute: "2-digit", timeZoneName: "short"});
 const numbers = new Intl.NumberFormat("en-US", {maximumFractionDigits: 1});
 const signed = new Intl.NumberFormat("en-US", {maximumFractionDigits: 1, signDisplay: "exceptZero"});
+const precise = new Intl.NumberFormat("en-US", {maximumFractionDigits: 4});
+const preciseSigned = new Intl.NumberFormat("en-US", {maximumFractionDigits: 4, signDisplay: "exceptZero"});
 const verdicts = {
+  one_sided: ["One-sided results", "The available comparisons only cover one outcome at each horizon. They can’t establish market reliability."],
+  limited: ["Limited evidence of accuracy", "Too few independent comparisons beat the majority outcome with both Yes and No represented."],
   insufficient: ["Too few prices to judge reliability", "The matrix shows the prices that are available."],
   no_cases: ["No useful comparison found", "No comparable market with a verified prior resolution was found for this scope."],
   target_unverified: ["Official resolution unavailable", "A comparison for this historical market needs a verified resolution date."]
@@ -29,6 +33,8 @@ let busyControl;
 let shown;
 let report;
 let matrixHorizons = [];
+let horizonRequest;
+let traded = new Set();
 
 function el(tag, value, className) {
   const node = document.createElement(tag);
@@ -133,20 +139,27 @@ function resultCell(label, ...values) {
   return td;
 }
 
-function quoteCell(seconds, quote) {
+function quoteCell(seconds, quote, row) {
   const stack = el("div", null, "precedent-quote");
   if (!Number.isFinite(quote.price)) {
     stack.append(el("strong", "No price", "muted"), el("span", quote.missing, "precedent-quote-meta muted"));
   } else {
     const result = quote.favorite_correct === true ? "Right" : quote.favorite_correct === false ? "Wrong" : "No favorite";
     const tone = quote.favorite_correct === true ? "positive" : quote.favorite_correct === false ? "negative" : "muted";
-    const percent = numbers.format(quote.price * 100);
+    const percent = precise.format(quote.price * 100);
     const price = percent === "50" && quote.price !== .5 ? (quote.price > .5 ? ">50%" : "<50%") : percent + "%";
-    stack.append(el("strong", result, tone), el("span", "Yes " + price),
-      el("span", points(quote.outcome_delta, true) + " to result", "precedent-quote-meta muted"));
-    stack.title = points(quote.vs_even, true) + " vs 50% · Observed " + quoteDate.format(quote.observed_at * 1000) +
-      " UTC · Cutoff " + quoteDate.format(quote.cutoff * 1000) + " UTC";
-    stack.lastElementChild.append(el("span", " · " + points(quote.vs_even, true) + " vs 50%", "sr-only"));
+    const details = el("button", "Yes " + price, "text-button quote-detail-button");
+    details.type = "button";
+    details.setAttribute("aria-haspopup", "dialog");
+    details.addEventListener("click", () => {
+      byId("precedent-quote-title").textContent = row.label + " · " + horizonLabel(seconds);
+      const fields = [["Yes price", price], ["Observed (UTC)", quoteDate.format(quote.observed_at * 1000)],
+        ["Cutoff (UTC)", quoteDate.format(quote.cutoff * 1000)], ["From 50%", preciseSigned.format(quote.vs_even) + " pts"]];
+      byId("precedent-quote-details").replaceChildren(...fields.map(([label, value]) => contextStat(label, value)));
+      byId("precedent-quote").showModal();
+    });
+    stack.append(el("strong", result, tone), details,
+      el("span", preciseSigned.format(quote.outcome_delta) + " pts to result", "precedent-quote-meta muted"));
   }
   return resultCell(horizonLabel(seconds), stack);
 }
@@ -158,13 +171,14 @@ function caseRow(row, horizons) {
   const market = identity(row.image, title, row.label !== row.event_title ? row.event_title : "");
   const tags = el("span", null, "meta");
   tags.append(el("span", row.reason));
-  if (row.traded) tags.append(el("span", "You traded", "side"));
+  tags.dataset.condition = row.condition;
+  if (traded.has(row.condition) || row.traded) tags.append(el("span", "You traded", "side"));
   market.lastElementChild.append(tags);
   const outcome = el("span", row.outcome ? "Yes" : "No", row.outcome ? "side yes" : "side no");
   const resolution = el("div", null, "precedent-resolution");
   resolution.append(outcome, el("span", dateLabel(row.resolved_at), "muted"));
   tr.append(resultCell("Market", market), resultCell("Resolved", resolution));
-  for (const {seconds} of horizons) tr.append(quoteCell(seconds, row.prices[seconds]));
+  for (const {seconds} of horizons) tr.append(quoteCell(seconds, row.prices[seconds], row));
   return tr;
 }
 
@@ -188,6 +202,10 @@ function matrixHead(horizons) {
       record.textContent = "No prices";
     }
     th.append(record);
+    if (horizon.count && Number.isFinite(horizon.majority)) {
+      th.append(el("span", `${horizon.yes_count} Yes · ${horizon.no_count} No`),
+        el("span", `Majority baseline ${horizon.majority}/${horizon.count}`));
+    }
     if (Number.isFinite(horizon.average_error)) th.append(el("span", points(horizon.average_error) + " avg. error"));
     tr.append(th);
   }
@@ -324,18 +342,19 @@ function renderReport(focus) {
   const available = new Set(report.horizons.map(({seconds}) => seconds));
   const preserved = focus ? [] : matrixHorizons.filter((seconds) => available.has(seconds));
   matrixHorizons = preserved.length ? preserved : defaults;
-  horizonToggle.hidden = report.horizons.length <= defaults.length;
+  horizonToggle.hidden = !report.extra_horizons?.length && report.horizons.length <= defaults.length;
   renderMatrix();
   const calibrated = report.horizons.filter((row) => Number.isFinite(row.brier_skill));
   byId("precedent-calibration").hidden = !calibrated.length;
+  const previousCalibration = calibrationHorizon.value;
   calibrationHorizon.replaceChildren(...calibrated.map(({seconds}) => new Option(horizonLabel(seconds), seconds)));
+  if (calibrated.some(({seconds}) => String(seconds) === previousCalibration)) calibrationHorizon.value = previousCalibration;
   renderCalibration();
   const coverage = [];
   if (report.truncated) coverage.push(`Sample capped by search coverage. ${report.cases.length} of ${report.matched} eligible markets shown.`);
   if (report.other_duration) coverage.push(`${report.other_duration} markets excluded because their durations differ substantially.`);
   if (report.unusable) coverage.push(`${report.unusable} candidates lacked a verified prior binary resolution.`);
   if (report.failed_quotes) coverage.push(`${report.failed_quotes} price requests failed.`);
-  if (DashboardSettings.wallet && !report.wallet_available) coverage.push("Your trade history could not be checked.");
   byId("precedent-coverage").textContent = coverage.join(" ");
   show(results);
   if (focus) heading.focus({preventScroll: true});
@@ -346,13 +365,28 @@ async function compare(market, scope) {
   const keep = report?.target.slug === market && !results.hidden;
   const message = keep && scope === "broad" ? "Checking the broader comparison…" : "Loading market comparison…";
   const current = begin(message, keep ? scopeControl : null);
+  horizonRequest?.abort();
+  horizonRequest = undefined;
   results.setAttribute("aria-busy", "true");
   syncScope(scope);
   try {
-    const data = await read({market, scope, wallet: DashboardSettings.wallet}, current.signal);
+    const data = await read({market, scope, horizons: "default"}, current.signal);
     if (current !== request) return;
     report = data;
+    traded = new Set();
     renderReport(!keep);
+    const wallet = DashboardSettings.wallet;
+    if (wallet && data.cases.length) {
+      read({market, scope, wallet, activity: "1"}, current.signal).then((activity) => {
+        if (current !== request) return;
+        traded = new Set(activity.traded);
+        for (const tags of byId("precedent-rows").querySelectorAll("[data-condition]")) {
+          if (traded.has(tags.dataset.condition) && !tags.querySelector(".side")) tags.append(el("span", "You traded", "side"));
+        }
+      }).catch(() => {
+        if (current === request) byId("precedent-coverage").append(" Your trade history could not be checked.");
+      });
+    }
   } catch (failure) {
     if (current !== request) return;
     if (keep) {
@@ -378,7 +412,7 @@ function route() {
   const catalog = params.get("catalog");
   const back = document.querySelector(".back-link");
   if (catalog !== null) {
-    back.href = "/markets" + (catalog.startsWith("?") || catalog === "#watchlist" ? catalog : "");
+    back.href = "/markets" + (catalog.startsWith("?") || /^#watchlist(?:\/market\/[a-z0-9-]+)?$/.test(catalog) ? catalog : "");
     back.textContent = "← New trade";
   } else if (params.get("source") === "trades") {
     back.href = "/trades";
@@ -391,16 +425,40 @@ function route() {
 }
 
 calibrationHorizon.addEventListener("change", renderCalibration);
-horizonToggle.addEventListener("click", () => {
+horizonToggle.addEventListener("click", async () => {
+  const message = byId("precedent-horizon-status");
+  message.hidden = true;
   showHorizonChoices(matrixHorizons);
   horizonDialog.showModal();
+  if (!report.extra_horizons?.length || report.extended || horizonRequest) return;
+  const current = new AbortController();
+  horizonRequest = current;
+  message.textContent = "Checking additional horizons…";
+  message.hidden = false;
+  try {
+    const data = await read({market: report.target.slug, scope: report.scope}, current.signal);
+    if (current !== horizonRequest) return;
+    report = {...data, extended: true};
+    const selected = [...horizonChoices.querySelectorAll("input:checked")].map(({value}) => Number(value));
+    if (horizonDialog.open && !horizonChoices.contains(document.activeElement)) showHorizonChoices(selected);
+    else if (horizonDialog.open) {
+      const focused = document.activeElement.value;
+      showHorizonChoices(selected);
+      horizonChoices.querySelector(`input[value="${focused}"]`)?.focus();
+    }
+    message.textContent = data.horizons.length > defaultHorizons().length ? "" : "No additional horizons have prices.";
+  } catch {
+    if (current === horizonRequest) message.textContent = "Additional horizons couldn’t load. Reopen to try again.";
+  } finally {
+    if (current === horizonRequest) horizonRequest = undefined;
+  }
 });
 horizonChoices.addEventListener("change", updateHorizonChoices);
 byId("precedent-horizon-default").addEventListener("click", () => showHorizonChoices(defaultHorizons()));
 byId("precedent-horizon-form").addEventListener("submit", (event) => {
   event.preventDefault();
   matrixHorizons = [...horizonChoices.querySelectorAll("input:checked")].map(({value}) => Number(value));
-  renderMatrix();
+  renderReport(false);
   horizonDialog.close();
   DashboardWidgets.softUpdate(byId("precedent-table"));
 });
