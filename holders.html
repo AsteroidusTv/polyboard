@@ -27,7 +27,10 @@
         </div>
       </div>
     </header>
-    <p id="holder-loading" class="muted" role="status">Loading holder list…</p>
+    <div id="holder-loading" class="muted">
+      <p role="status">Loading holder list…</p>
+      <progress class="holder-progress" aria-label="Loading holder list"></progress>
+    </div>
     <div id="holder-error" class="empty" hidden><p class="negative" role="alert"></p><button type="button" id="holder-retry" class="secondary-button">Try again</button></div>
 
     <div id="holder-view" hidden>
@@ -72,8 +75,14 @@
             <button type="button" class="secondary-button" id="holder-stop" hidden>Stop</button>
           </div>
         </div>
+        <div class="holder-scan-progress" id="holder-scan-progress" hidden>
+          <div class="holder-scan-label">
+            <p id="holder-scan-status" class="muted holder-scan-status" role="status"></p>
+            <span id="holder-scan-percent" class="muted" aria-hidden="true" hidden></span>
+          </div>
+          <progress class="holder-progress" id="holder-scan-meter" aria-label="Holder analysis progress"></progress>
+        </div>
         <dl class="holder-metrics" id="holder-results"></dl>
-        <p id="holder-scan-status" class="muted holder-scan-status" role="status"></p>
         <div class="holder-view-bar">
           <div class="chart-ranges" id="holder-period" role="group" aria-label="Holder performance view">
             <button type="button" data-period="recent" aria-pressed="true">Recent</button>

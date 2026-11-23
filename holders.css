@@ -33,7 +33,17 @@
 .holder-metrics dt { font-size: .74rem; }
 .holder-metrics dd { font-size: 1rem; }
 .holder-metrics small { color: var(--muted); font-size: .69rem; display: block; }
-.holder-scan-status { margin-top: 10px; }
+#holder-loading { max-width: 22rem; display: grid; gap: 8px; }
+.holder-scan-progress { margin-top: 14px; display: grid; gap: 6px; }
+.holder-scan-label { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+#holder-scan-percent { font-size: .78rem; font-variant-numeric: tabular-nums; }
+.holder-progress { appearance: none; display: block; width: 100%; height: 6px; border: 0; border-radius: 5px; background: #28344a; overflow: hidden; }
+.holder-progress::-webkit-progress-bar { background: #28344a; }
+.holder-progress::-webkit-progress-value { background: #aabaff; border-radius: inherit; }
+.holder-progress::-moz-progress-bar { background: #aabaff; border-radius: inherit; }
+.holder-progress:indeterminate { background: #28344a linear-gradient(90deg, transparent 25%, #8397ea 50%, transparent 75%) 0 / 200% 100%; }
+.holder-progress:indeterminate::-webkit-progress-bar, .holder-progress:indeterminate::-webkit-progress-value { background: transparent; }
+.holder-progress:indeterminate::-moz-progress-bar { background: transparent; }
 #holder-table-note { margin: 10px 0; }
 .holder-scan-status:empty, #holder-table-note:empty { display: none; }
 .holders-page #holder-method { left: auto; right: 0; }
@@ -79,7 +89,10 @@
 #holder-review-report ul { margin: 8px 0; padding-left: 18px; }
 @media (prefers-reduced-motion: no-preference) {
   .holder-outcomes button { transition: background-color 160ms ease, border-color 160ms ease; }
+  .holder-progress::-webkit-progress-value { transition: width 180ms ease; }
+  .holder-progress:indeterminate { animation: holder-progress-sweep 1.35s linear infinite; }
 }
+@keyframes holder-progress-sweep { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 @media (max-width: 760px) {
   .holder-panel, .holder-market { padding: 14px; }
   .holder-metrics { gap: 6px; }

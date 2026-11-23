@@ -40,7 +40,10 @@
   const reviewDots = byId("holder-review-dots");
   const progress = byId("holder-review-status");
   const scanButton = byId("holder-scan");
+  const scanProgress = byId("holder-scan-progress");
   const scanStatus = byId("holder-scan-status");
+  const scanMeter = byId("holder-scan-meter");
+  const scanPercent = byId("holder-scan-percent");
   const stopButton = byId("holder-stop");
   let available, listRequest, scan, walletRequest, reviewRequest;
   let loadingRoster = false;
@@ -148,6 +151,28 @@
     return holder.wallet.slice(0, 6) + "…" + holder.wallet.slice(-4);
   }
 
+  function renderScanProgress(checked = 0, total = 0) {
+    const preparing = loadingRoster || scan?.preview;
+    const pending = preparing || Boolean(scan);
+    const failed = scanStatus.classList.contains("negative");
+    scanProgress.hidden = !pending && !checked && !failed;
+    scanMeter.hidden = !pending && !checked;
+    scanPercent.hidden = Boolean(preparing) || !total || (!pending && !checked);
+    if (preparing) {
+      scanMeter.removeAttribute("value");
+    } else if (total) {
+      scanMeter.max = total;
+      scanMeter.value = checked;
+      scanPercent.textContent = Math.floor(100 * checked / total) + "%";
+    }
+    if (failed && !pending) return;
+    const progress = count.format(checked) + " / " + count.format(total) + " wallets checked";
+    const message = loadingRoster ? "Loading holder list…"
+      : scan?.preview ? "Analyzing wallets on this page…"
+      : pending ? progress + "…" : checked ? progress : "";
+    if (scanStatus.textContent !== message) scanStatus.textContent = message;
+  }
+
   function renderList() {
     if (!available) return;
     const group = available.sides[side];
@@ -173,7 +198,7 @@
         period === "similar" ? rateValue(record, "right", "wrong") : rateValue(record, "profit", "loss"),
         wallets ? count.format(wallets) + " wallets with records" : "Wallet coverage pending")
     );
-    const checked = profiles.length;
+    const checked = byWallet.size;
     const comparableCount = profiles.length ? [...map.values()].at(-1)?.similar_markets : null;
     const notes = [];
     if (available.partial) notes.push("Polymarket returned a partial holder list.");
@@ -185,13 +210,11 @@
       notes.push("Some wallet histories are sampled or incomplete.");
     }
     byId("holder-table-note").textContent = notes.join(" ");
-    scanButton.disabled = Boolean(scan) || !shown || checked >= shown;
-    scanButton.textContent = checked === shown && shown ? "Analysis complete" : checked ? "Analyze remaining " + count.format(shown - checked) : "Analyze holders";
+    scanButton.disabled = loadingRoster || Boolean(scan) || !shown || checked >= shown;
+    scanButton.textContent = scan ? "Analyzing…" : checked === shown && shown ? "Analysis complete"
+      : checked ? "Analyze remaining " + count.format(shown - checked) : "Analyze holders";
     stopButton.hidden = !scan;
-    if (scan) scanStatus.textContent = count.format(checked) + " / " + count.format(shown) + " wallets checked…";
-    else if (!scanStatus.classList.contains("negative")) {
-      scanStatus.textContent = checked ? count.format(checked) + " / " + count.format(shown) + " wallets checked" : "";
-    }
+    renderScanProgress(checked, shown);
     byId("holder-empty").hidden = Boolean(shown);
     byId("holder-table").hidden = !shown;
     byId("holder-pages").hidden = shown <= PAGE_SIZE;
@@ -265,6 +288,8 @@
     listRequest = current;
     const selected = cohort.value;
     loadingRoster = true;
+    scanStatus.classList.remove("negative");
+    renderScanProgress();
     byId("holder-loading").hidden = !byId("holder-view").hidden;
     byId("holder-error").hidden = true;
     cohort.disabled = true;
@@ -288,6 +313,7 @@
       if (available.sides[side].rows.length) analyze(false);
     } catch (error) {
       if (current.signal.aborted) return;
+      loadingRoster = false;
       if (available) {
         cohort.value = available.cohort;
         renderList();
@@ -304,28 +330,30 @@
   }
 
   function stop() {
-    scan?.abort();
+    scan?.controller.abort();
     scan = undefined;
   }
 
   async function analyze(all) {
     if (scan || !available || loadingRoster) return;
-    const current = new AbortController();
-    scan = current;
     const selection = side, map = slices[side], size = available.sides[side].rows.length;
-    const offsets = all ? Array.from({length: Math.ceil(size / PAGE_SIZE)}, (_, index) => index * PAGE_SIZE) : [page * PAGE_SIZE];
+    const pages = all ? Array.from({length: Math.ceil(size / PAGE_SIZE)}, (_, index) => index * PAGE_SIZE) : [page * PAGE_SIZE];
+    const offsets = pages.filter((offset) => offset < size && !map.has(offset));
+    if (!offsets.length) return;
+    const controller = new AbortController();
+    const current = {controller, preview: !all};
+    scan = current;
     scanStatus.classList.remove("negative");
     renderList();
     try {
       for (const offset of offsets) {
-        if (map.has(offset) || offset >= size) continue;
-        const data = await fetchHolders("performance", {snapshot: available.snapshot, side: selection, offset, scope: scope.value}, current.signal);
-        if (current.signal.aborted) return;
+        const data = await fetchHolders("performance", {snapshot: available.snapshot, side: selection, offset, scope: scope.value}, controller.signal);
+        if (controller.signal.aborted) return;
         map.set(offset, data);
         renderList();
       }
     } catch (error) {
-      if (current.signal.aborted) return;
+      if (controller.signal.aborted) return;
       scanStatus.classList.add("negative");
       scanStatus.textContent = error.message || "Wallet histories couldn’t load.";
     } finally {
@@ -525,6 +553,7 @@
   cohort.addEventListener("change", load);
   scope.addEventListener("change", () => {
     stop();
+    scanStatus.classList.remove("negative");
     slices = [new Map(), new Map()];
     renderList();
     analyze(false);
