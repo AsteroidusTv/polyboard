@@ -63,7 +63,7 @@
           </div>
         </div>
         <div class="holder-side-row">
-          <div class="chart-ranges" id="holder-outcomes" role="group" aria-label="Choose holder outcome">
+          <div class="holder-outcomes" id="holder-outcomes" role="group" aria-label="Choose holder outcome">
             <button type="button" aria-pressed="true"></button>
             <button type="button" aria-pressed="false"></button>
           </div>
@@ -113,10 +113,16 @@
 
     <dialog id="holder-wallet-dialog" class="watch-dialog holder-dialog" aria-labelledby="holder-wallet-title">
       <header class="watch-dialog-head">
-        <div><h2 id="holder-wallet-title">Wallet activity</h2><p id="holder-wallet-address" class="muted"></p></div>
-        <form method="dialog"><button type="submit" class="text-button activity-dismiss" aria-label="Close wallet activity">×</button></form>
+        <div class="holder-wallet-identity"><h2 id="holder-wallet-title">Wallet activity</h2><p id="holder-wallet-address" class="muted"></p></div>
+        <form method="dialog"><button type="submit" class="text-button activity-dismiss" aria-label="Close wallet activity" autofocus>×</button></form>
       </header>
-      <div class="watch-dialog-body" id="holder-wallet-body"></div>
+      <div class="watch-dialog-body" id="holder-wallet-scroll">
+        <div class="holder-wallet-actions">
+          <a id="holder-wallet-profile" class="secondary-button button-link" target="_blank" rel="noopener noreferrer">Open profile on Polymarket ↗</a>
+        </div>
+        <div id="holder-wallet-chart" class="portfolio-chart"></div>
+        <div id="holder-wallet-body"></div>
+      </div>
     </dialog>
     <dialog id="holder-review-dialog" class="watch-dialog holder-dialog" aria-labelledby="holder-review-title">
       <header class="watch-dialog-head">

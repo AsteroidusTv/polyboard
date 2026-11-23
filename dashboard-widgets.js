@@ -13,6 +13,7 @@ const DashboardWidgets = (() => {
   const plotHelp = "Use Left and Right Arrow to inspect points. Home and End go to the first and last point.";
   let portfolioPanel;
   let portfolioRequest;
+  const walletCharts = new WeakMap();
   let detail;
   let detailRequest;
   const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
@@ -95,7 +96,7 @@ const DashboardWidgets = (() => {
     return button;
   }
 
-  function chartPanel(root, isPrice, onTrade) {
+  function chartPanel(root, isPrice, onTrade, showActivity = !isPrice) {
     root.innerHTML = `
       <div class="chart-header">
         <div><h2></h2><div class="chart-value" hidden></div></div>
@@ -109,7 +110,7 @@ const DashboardWidgets = (() => {
           ${isPrice ? `<div class="chart-ranges" role="group" aria-label="Price scale">
             <button type="button" data-scale="fit" aria-label="Fit price scale" aria-pressed="true">Fit</button>
             <button type="button" data-scale="full" aria-label="0 to 100 cents" aria-pressed="false">0–100¢</button>
-          </div>` : `<button type="button" class="secondary-button chart-trades-toggle" aria-pressed="false">Show trades</button>`}
+          </div>` : showActivity ? `<button type="button" class="secondary-button chart-trades-toggle" aria-pressed="false">Show trades</button>` : ""}
         </div>
       </div>
       <p class="chart-status muted" role="status" hidden></p>
@@ -134,7 +135,7 @@ const DashboardWidgets = (() => {
     heading.textContent = defaultHeading;
     const canvas = root.querySelector("canvas");
     const activation = isPrice ? " Press Enter on a trade marker to show its transaction."
-      : " With trades visible, press Enter on a marker to pin its details.";
+      : showActivity ? " With trades visible, press Enter on a marker to pin its details." : "";
     canvas.setAttribute("aria-label", label + " chart. " + plotHelp + activation);
     const plot = root.querySelector(".chart-plot");
     const controls = root.querySelector(".chart-controls");
@@ -149,7 +150,7 @@ const DashboardWidgets = (() => {
     const chart = new DashboardLineChart(plot, {
       label, value, price: isPrice, tick: isPrice ? formatPrice : shortDollars.format,
       onTrade: isPrice ? (index) => selectTrade(index, true) : undefined,
-      onOpenPosition: isPrice ? undefined : (marker) => data.openTrade(marker)
+      onOpenPosition: showActivity ? (marker) => data.openTrade(marker) : undefined
     });
     let data;
     let range = 0;
@@ -324,21 +325,37 @@ const DashboardWidgets = (() => {
     return response.json();
   }
 
+  async function loadPortfolioChart(panel, wallet, signal, {cutoff = Infinity, note, activity, retry} = {}) {
+    if (cutoff === null) {
+      panel.show("A market close time is needed for historical wallet P&L.");
+      return;
+    }
+    panel.show("Loading portfolio history…");
+    try {
+      const data = await json("/api/portfolio-history", {wallet}, signal);
+      if (signal.aborted) return;
+      const points = data.points.filter(([time]) => time < cutoff);
+      if (!points.length) return panel.show(Number.isFinite(cutoff)
+        ? "No wallet P&L history before this market closed." : "No portfolio history for this wallet.");
+      const latest = points.at(-1)[1];
+      panel.show("", {points, markers: [], subtitle: signedDollars.format(latest), note,
+        tone: latest >= .005 ? "positive" : latest <= -.005 ? "negative" : "",
+        ...activity}, DashboardSettings.chartRange);
+    } catch {
+      if (!signal.aborted) panel.show("Portfolio history couldn’t load. " + retry);
+    }
+  }
+
   async function portfolio(root, wallet) {
     portfolioRequest?.abort();
     const request = new AbortController();
     portfolioRequest = request;
     portfolioPanel ||= chartPanel(root, false);
     root.hidden = false;
-    portfolioPanel.show("Loading portfolio history…");
-    try {
-      const {points} = await json("/api/portfolio-history", {wallet}, request.signal);
-      if (request.signal.aborted) return;
-      if (!points.length) return portfolioPanel.show("No portfolio history for this wallet.");
-      const latest = points.at(-1)[1];
-      let positions;
-      portfolioPanel.show("", {points, markers: [], subtitle: signedDollars.format(latest),
-        tone: latest >= .005 ? "positive" : latest <= -.005 ? "negative" : "",
+    let positions;
+    return loadPortfolioChart(portfolioPanel, wallet, request.signal, {
+      retry: "Use Refresh to try again.",
+      activity: {
         loadTrades: () => portfolioTimeline(wallet, request.signal),
         openTrade(marker) {
           positions ||= json("/api/trade-summary", {wallet}, request.signal)
@@ -351,10 +368,14 @@ const DashboardWidgets = (() => {
             summary: positions.then((rows) => rows?.get(String(marker.position.token_id))),
             fill: marker.fill
           });
-        }}, DashboardSettings.chartRange);
-    } catch {
-      if (!request.signal.aborted) portfolioPanel.show("Portfolio history couldn’t load. Use Refresh to try again.");
-    }
+        }
+      }
+    });
+  }
+
+  function walletPerformance(root, wallet, signal, {cutoff, note} = {}) {
+    if (!walletCharts.has(root)) walletCharts.set(root, chartPanel(root, false, undefined, false));
+    return loadPortfolioChart(walletCharts.get(root), wallet, signal, {cutoff, note, retry: "Reopen this profile to try again."});
   }
 
   async function portfolioTimeline(wallet, signal) {
@@ -764,6 +785,6 @@ const DashboardWidgets = (() => {
     });
   }
 
-  return {portfolio, openMarket, openPosition, marketTitle, positionBadges, statuses, softUpdate, slidingSelection, loadOnScroll,
+  return {portfolio, walletPerformance, openMarket, openPosition, marketTitle, positionBadges, statuses, softUpdate, slidingSelection, loadOnScroll,
     setPortfolioRange(days) { portfolioPanel?.setRange(days); }};
 })();

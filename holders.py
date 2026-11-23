@@ -216,7 +216,7 @@ def positions_by_market(rows, before=None, resolutions=None):
         pnl = number(row.get("realized_pnl") if status == "CLOSED" else row.get("total_pnl"))
         record = {"at": stamp, "entry": epoch(row.get("first_entry_at")), "index": position_outcome(row),
                   "outcome": str(row.get("outcome") or ""), "pnl": pnl,
-                  "title": str(row.get("title") or "Market")[:300]}
+                  "title": str(row.get("title") or "Market")[:300], "image": thumbnail(row)}
         existing = grouped[condition].get(token)
         if existing is None or existing["at"] < stamp:
             grouped[condition][token] = record
@@ -225,8 +225,9 @@ def positions_by_market(rows, before=None, resolutions=None):
         records = list(tokens.values())
         latest = max(records, key=lambda item: item["at"])
         pnl = sum(row["pnl"] for row in records) if all(row["pnl"] is not None for row in records) else None
+        image = next((record["image"] for record in records if record["image"]), "")
         markets.append({"condition": condition, "at": latest["at"], "title": latest["title"],
-                        "pnl": pnl, "positions": records})
+                        "image": image, "pnl": pnl, "positions": records})
     return sorted(markets, key=lambda row: row["at"], reverse=True)
 
 
@@ -256,7 +257,8 @@ def comparable_record(markets, winners, evidence=None):
             if pre_resolution != {side}:
                 mixed += 1
                 continue
-        matches.append({"title": row["title"], "at": case["resolved_at"], "outcome": entries[0]["outcome"],
+        matches.append({"title": row["title"], "image": row.get("image") or case.get("image", ""),
+                        "at": case["resolved_at"], "outcome": entries[0]["outcome"],
                         "correct": side == case["winner"], "pnl": row["pnl"]})
     matches.sort(key=lambda row: row["at"], reverse=True)
     return {"right": sum(row["correct"] for row in matches), "wrong": sum(not row["correct"] for row in matches),
@@ -346,7 +348,7 @@ def comparable_markets(market, scope, bucket):
         report = comparable_sample(market["slug"], scope, data_request, bucket)
         if not report or report.get("status") == "target_unverified":
             return None
-        return {case["condition"]: {"resolved_at": case["resolved_at"],
+        return {case["condition"]: {"resolved_at": case["resolved_at"], "image": thumbnail(case) or case.get("event_image"),
                                     "winner": case["yes_index"] if case["outcome"] else 1 - case["yes_index"]}
                 for case in report["cases"]}
     except UPSTREAM:
@@ -421,7 +423,8 @@ def recent_fills(wallet, market):
             return []
         params["end"] = min(dates) - 1
     rows, _ = data_page("trades", params, timeout=6)
-    return [{"title": str(row.get("title") or "Market")[:300], "side": row.get("side"), "outcome": row.get("outcome"),
+    return [{"title": str(row.get("title") or "Market")[:300], "image": thumbnail(row),
+             "side": row.get("side"), "outcome": row.get("outcome"),
              "price": number(row.get("price")), "size": number(row.get("size")), "at": epoch(row.get("timestamp"))}
             for row in rows]
 

@@ -46,6 +46,20 @@ class HolderTests(unittest.TestCase):
         self.assertEqual(holders.comparable_record(both, winners)["excluded"], 1)
         self.assertEqual(holders.comparable_record(both, winners)["wrong"], 0)
 
+    def test_keeps_market_thumbnails_in_wallet_activity(self):
+        icon = "https://polymarket.example/market.png"
+        fallback = "https://polymarket.example/event.png"
+        position = {"condition_id": CONDITION_A, "token_id": YES, "last_event_at": 21, "first_entry_at": 11,
+                    "outcome_index": 0, "outcome": "Yes", "realized_pnl": 5, "icon": icon}
+        market, = holders.positions_by_market([("CLOSED", position)])
+        self.assertEqual(market["image"], icon)
+        winners = {CONDITION_A: {"resolved_at": 30, "winner": 0, "image": fallback}}
+        picks = holders.comparable_record([market | {"image": ""}], winners)
+        self.assertEqual(picks["rows"][0]["image"], fallback)
+        with patch.object(holders, "data_page", return_value=([{"title": "Trade", "icon": icon}], None)):
+            fill, = holders.recent_fills(WALLET_A, {"closed": False})
+        self.assertEqual(fill["image"], icon)
+
     def test_historical_view_excludes_future_settlement_and_future_activities(self):
         position = {"condition_id": CONDITION_A, "token_id": YES, "last_event_at": 10,
                     "outcome_index": 0, "outcome": "Yes", "total_pnl": 5, "realized_pnl": 2}

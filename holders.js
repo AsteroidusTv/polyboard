@@ -62,7 +62,9 @@
 
   function badge(label, value, description) {
     const item = node("div");
-    item.append(node("dt", label), node("dd", value));
+    const amount = node("dd");
+    amount.append(value);
+    item.append(node("dt", label), amount);
     if (description) item.append(node("small", description));
     return item;
   }
@@ -91,21 +93,45 @@
     note.textContent = "Retrospective view. The roster shows remaining shares today. Redeemed wallets may be absent. Performance uses records available before market close.";
     byId("holder-coverage").textContent = "Public snapshot " + timestamp(asOf);
     outcomeButtons.forEach((button, index) => {
-      button.textContent = available.sides[index].label;
+      const group = available.sides[index];
+      button.dataset.tone = outcomeTone(group.label, index);
+      const label = node("strong", group.label, "holder-outcome-label");
+      const coverage = node("small", count.format(group.rows.length) + " in sample", "muted");
+      coverage.id = "holder-outcome-count-" + index;
+      button.replaceChildren(label, coverage);
+      button.setAttribute("aria-label", group.label);
+      button.setAttribute("aria-describedby", coverage.id);
       button.setAttribute("aria-pressed", String(side === index));
     });
   }
 
-  function exposureRate(result, left, right) {
+  function outcomeTone(label, index) {
+    const normalized = String(label || "").toLowerCase();
+    if (normalized === "yes" || normalized === "no") return normalized;
+    return index === 0 ? "first" : index === 1 ? "second" : "";
+  }
+
+  function moneyTone(amount) {
+    return amount >= .005 ? "positive" : amount <= -.005 ? "negative" : "muted";
+  }
+
+  function rateValue(result, left, right) {
     const good = result?.[left], bad = result?.[right];
     const total = good + bad;
-    return Number.isFinite(total) && total ? count.format(good) + " / " + count.format(total) : "—";
+    const value = node("strong", undefined, "holder-score");
+    if (!total) {
+      value.textContent = "—";
+      return value;
+    }
+    const tone = total >= 5 && good !== bad ? (good > bad ? "positive" : "negative") : "";
+    value.append(node("span", count.format(good), tone), node("span", " / " + count.format(total), "muted"));
+    return value;
   }
 
   function rateCell(result, left, right, trailing) {
     const wrapper = node("span", undefined, "holder-rate");
-    wrapper.append(node("strong", exposureRate(result, left, right)));
-    if (trailing) wrapper.append(node("small", trailing));
+    wrapper.append(rateValue(result, left, right));
+    if (trailing) wrapper.append(trailing instanceof HTMLElement ? trailing : node("small", trailing, "muted"));
     return wrapper;
   }
 
@@ -144,7 +170,7 @@
       badge("Holders in sample", count.format(shown), shown ? shares.format(group.shares) + " net shares" : ""),
       badge("Top 5 concentration", group.top_five_pct == null ? "—" : group.top_five_pct + "%", "Of sampled shares"),
       badge(period === "similar" ? "Correct comparable picks" : "Profitable markets",
-        period === "similar" ? exposureRate(record, "right", "wrong") : exposureRate(record, "profit", "loss"),
+        period === "similar" ? rateValue(record, "right", "wrong") : rateValue(record, "profit", "loss"),
         wallets ? count.format(wallets) + " wallets with records" : "Wallet coverage pending")
     );
     const checked = profiles.length;
@@ -188,9 +214,10 @@
       wallet.append(node("span", "#" + (rank + 1), "holder-rank"), node("span", walletLabel(holder)));
       wallet.addEventListener("click", () => openWallet(holder, rank));
       const direction = period === "similar" ? profile?.similar : period === "history" ? profile?.direction : profile?.recent_direction;
+      const pnl = profile?.[period]?.pnl;
       const economic = period === "similar"
         ? (direction ? node("strong", count.format(direction.right + direction.wrong) + (direction.excluded ? " graded" : "")) : node("span", "—"))
-        : rateCell(profile?.[period], "profit", "loss", Number.isFinite(profile?.[period].pnl) ? money.format(profile[period].pnl) : "");
+        : rateCell(profile?.[period], "profit", "loss", Number.isFinite(pnl) ? node("small", money.format(pnl), moneyTone(pnl)) : null);
       row.append(holderCell("Holder", wallet), holderCell("Net shares", node("strong", shares.format(holder.shares))),
         holderCell(head[2].textContent, economic),
         holderCell("Correct picks", rateCell(direction, "right", "wrong", direction?.excluded ? direction.excluded + " excluded" : "")));
@@ -320,21 +347,49 @@
     return section;
   }
 
-  function walletItem(title, detail) {
+  function walletItem(row, ...details) {
     const item = node("li");
-    item.append(node("strong", title), node("small", detail, "muted"));
+    const thumb = node("span", undefined, "holder-market-thumb");
+    thumb.setAttribute("aria-hidden", "true");
+    if (row.image?.startsWith("https://")) {
+      const image = node("img");
+      image.src = row.image;
+      image.alt = "";
+      image.loading = "lazy";
+      image.decoding = "async";
+      image.addEventListener("error", () => image.remove(), {once: true});
+      thumb.append(image);
+    }
+    const content = node("div", undefined, "holder-wallet-market");
+    const meta = node("div", undefined, "holder-wallet-meta");
+    meta.append(...details.filter(Boolean).map((entry) => typeof entry === "string" ? node("span", entry, "muted") : entry));
+    content.append(node("strong", row.title), meta);
+    item.append(thumb, content);
     return item;
+  }
+
+  function outcomeChip(outcome) {
+    return outcome ? node("span", outcome, "side " + outcomeTone(outcome)) : null;
   }
 
   async function openWallet(holder, rank) {
     walletRequest?.abort();
     const current = new AbortController();
     walletRequest = current;
+    walletDialog.dataset.wallet = holder.wallet;
     const body = byId("holder-wallet-body");
     byId("holder-wallet-title").textContent = walletLabel(holder);
     byId("holder-wallet-address").textContent = holder.wallet;
+    byId("holder-wallet-profile").href = "https://polymarket.com/profile/" + encodeURIComponent(holder.wallet);
     body.replaceChildren(node("p", "Loading wallet activity…", "muted"));
     walletDialog.showModal();
+    byId("holder-wallet-scroll").scrollTop = 0;
+    const market = available.market;
+    const closeTimes = [market.closed_at, market.resolved_at].filter(Number.isFinite);
+    const cutoff = market.closed ? (closeTimes.length ? Math.min(...closeTimes) : null) : undefined;
+    DashboardWidgets.walletPerformance(byId("holder-wallet-chart"), holder.wallet, current.signal, {
+      cutoff, note: Number.isFinite(cutoff) ? "History before market close · " + timestamp(cutoff) : undefined
+    });
     const common = {snapshot: available.snapshot, side, scope: scope.value};
     const base = Math.floor(rank / PAGE_SIZE) * PAGE_SIZE;
     const result = slices[side].get(base);
@@ -345,23 +400,26 @@
     const top = document.createDocumentFragment();
     if (profile) {
       const metrics = node("dl", undefined, "holder-metrics");
-      metrics.append(badge("Recent profitable", exposureRate(profile.recent, "profit", "loss")),
-        badge("History correct", exposureRate(profile.direction, "right", "wrong"), profile.direction_checked + " markets checked"),
-        badge("Similar correct", exposureRate(profile.similar, "right", "wrong")));
+      metrics.append(badge("Recent profitable", rateValue(profile.recent, "profit", "loss")),
+        badge("History correct", rateValue(profile.direction, "right", "wrong"), profile.direction_checked + " markets checked"),
+        badge("Similar correct", rateValue(profile.similar, "right", "wrong")));
       top.append(metrics);
       if (Number.isFinite(profile.realized_market_pnl)) top.append(node("p",
         "Polymarket lifetime realized market P&L " + money.format(profile.realized_market_pnl), "holder-note"));
       top.append(walletSection("Decided positions", profile.recent_positions, (row) =>
-        walletItem(row.title, timestamp(row.at, day) + " · " + (Number.isFinite(row.pnl) ? money.format(row.pnl) : "P&L unavailable")),
+        walletItem(row, node("span", Number.isFinite(row.pnl) ? money.format(row.pnl) : "P&L unavailable", moneyTone(row.pnl ?? NaN)),
+          timestamp(row.at, day)),
       "No decided positions were returned."));
       top.append(walletSection("Most recent comparable picks", profile.similar?.rows || [], (row) =>
-        walletItem(row.title, row.outcome + " · " + (row.correct ? "Correct" : "Incorrect") + " · " + timestamp(row.at, day)),
+        walletItem(row, outcomeChip(row.outcome), node("span", row.correct ? "Correct" : "Incorrect", row.correct ? "positive" : "negative"),
+          timestamp(row.at, day)),
       "No graded comparable picks in this sample."));
     } else top.append(node("p", "Wallet performance couldn’t load.", "muted"));
     top.append(walletSection("Latest public fills", latest.value?.fills || [], (row) =>
-      walletItem(row.title, [row.side === "BUY" ? "Buy" : row.side === "SELL" ? "Sell" : "Fill", row.outcome,
+      walletItem(row, node("span", row.side === "BUY" ? "Buy" : row.side === "SELL" ? "Sell" : "Fill", "holder-fill " + (row.side === "BUY" ? "buy" : row.side === "SELL" ? "sell" : "")),
+        outcomeChip(row.outcome),
         Number.isFinite(row.price) ? chance.format(row.price * 100) + "¢" : "",
-        Number.isFinite(row.size) ? shares.format(row.size) + " shares" : "", timestamp(row.at)].filter(Boolean).join(" · ")),
+        Number.isFinite(row.size) ? shares.format(row.size) + " shares" : "", timestamp(row.at)),
     latest.status === "rejected" ? "Public fills couldn’t load." : "No fills were returned."));
     body.replaceChildren(top);
   }
@@ -474,7 +532,13 @@
   byId("holder-retry").addEventListener("click", load);
   scanButton.addEventListener("click", () => analyze(true));
   stopButton.addEventListener("click", () => { stop(); renderList(); });
-  walletDialog.addEventListener("close", () => { if (!walletDialog.open) walletRequest?.abort(); });
+  walletDialog.addEventListener("close", () => {
+    if (walletDialog.open) return;
+    walletRequest?.abort();
+    const trigger = [...byId("holder-rows").querySelectorAll("button[data-wallet]")]
+      .find((button) => button.dataset.wallet === walletDialog.dataset.wallet);
+    trigger?.focus({preventScroll: true});
+  });
   byId("holder-review-launch").addEventListener("click", () => {
     byId("holder-review-report").hidden = true;
     reviewDialog.showModal();
