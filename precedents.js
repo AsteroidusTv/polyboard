@@ -73,7 +73,7 @@ function identity(imageUrl, titleNode, subtitle) {
   picture.setAttribute("aria-hidden", "true");
   if (imageUrl?.startsWith("https://")) {
     const image = el("img");
-    image.src = imageUrl;
+    image.src = DashboardWidgets.marketImageSource(imageUrl);
     image.alt = "";
     image.loading = "lazy";
     image.addEventListener("error", () => image.remove(), {once: true});

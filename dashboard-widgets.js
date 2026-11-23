@@ -18,6 +18,14 @@ const DashboardWidgets = (() => {
   let detailRequest;
   const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
   const activeUpdates = new WeakMap();
+  const marketImageOrigin = "https://polymarket-upload.s3.us-east-2.amazonaws.com/";
+
+  function marketImageSource(url) {
+    if (!document.body.hasAttribute("data-market-thumbnails") || !url.startsWith(marketImageOrigin)) return url;
+    const filename = url.slice(marketImageOrigin.length);
+    return /^[a-z\d_-][a-z\d_.-]{0,190}\.(?:png|jpe?g|webp)$/i.test(filename)
+      ? "/media/market/v1/" + filename : url;
+  }
 
   function softUpdate(element) {
     if (reduceMotion.matches || !element.animate) return;
@@ -790,6 +798,6 @@ const DashboardWidgets = (() => {
     });
   }
 
-  return {portfolio, walletPerformance, openMarket, openPosition, marketTitle, positionBadges, statuses, softUpdate, slidingSelection, loadOnScroll,
+  return {portfolio, walletPerformance, openMarket, openPosition, marketTitle, marketImageSource, positionBadges, statuses, softUpdate, slidingSelection, loadOnScroll,
     setPortfolioRange(days) { portfolioPanel?.setRange(days); }};
 })();

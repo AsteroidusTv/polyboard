@@ -208,7 +208,7 @@ const DashboardWatchlist = (() => {
     const head = el("div", undefined, "watch-card-head");
     if (market.image?.startsWith("https://")) {
       const image = el("img");
-      image.src = market.image;
+      image.src = DashboardWidgets.marketImageSource(market.image);
       image.alt = "";
       image.loading = "lazy";
       image.addEventListener("error", () => image.remove(), {once: true});

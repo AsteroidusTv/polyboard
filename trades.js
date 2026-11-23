@@ -79,7 +79,7 @@ function marketCell(trade, title = element("span", "title", trade.title || "Unkn
   const market = element("div", "market");
   if (trade.is_combo || (typeof trade.icon === "string" && trade.icon.startsWith("https://"))) {
     const image = element("img", trade.is_combo ? "icon combo-icon" : "icon");
-    image.src = trade.is_combo ? "/combo.svg" : trade.icon;
+    image.src = trade.is_combo ? "/combo.svg" : DashboardWidgets.marketImageSource(trade.icon);
     image.alt = "";
     if (trade.is_combo) image.title = "Polymarket Combo";
     image.loading = "lazy";

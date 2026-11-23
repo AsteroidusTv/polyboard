@@ -225,7 +225,7 @@ function discoveryMarketCard(market, idea) {
   const identity = element("div", "discovery-market-identity");
   if (typeof market.icon === "string" && market.icon.startsWith("https://")) {
     const icon = element("img", "icon");
-    icon.src = market.icon;
+    icon.src = DashboardWidgets.marketImageSource(market.icon);
     icon.alt = "";
     icon.loading = "lazy";
     icon.addEventListener("error", () => icon.remove(), {once: true});
@@ -530,7 +530,7 @@ function marketCell(position) {
     icon.alt = "";
     icon.loading = "lazy";
     icon.addEventListener("error", () => icon.remove(), {once: true});
-    icon.src = position.icon;
+    icon.src = DashboardWidgets.marketImageSource(position.icon);
     market.append(icon);
   }
   const details = element("div");

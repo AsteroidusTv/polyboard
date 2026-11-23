@@ -7,6 +7,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from hashlib import blake2s
+from http.client import HTTPException
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from math import isfinite
 from pathlib import Path
@@ -14,6 +15,7 @@ from time import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlencode, urlsplit
 
+import market_images
 from http_reads import data_request
 from read_cache import ReadCache
 
@@ -306,7 +308,7 @@ class Dashboard(BaseHTTPRequestHandler):
 
     def respond(self, status, body, mime="application/json", headers=None):
         self.send_response(status)
-        self.send_header("Content-Type", f"{mime}; charset=utf-8")
+        self.send_header("Content-Type", mime if mime == "image/webp" else f"{mime}; charset=utf-8")
         if status != 304:
             self.send_header("Content-Length", str(len(body)))
         for name, value in {"Cache-Control": "no-store", **(headers or {})}.items():
@@ -329,6 +331,18 @@ class Dashboard(BaseHTTPRequestHandler):
 
     def do_GET(self):
         url = urlsplit(self.path)
+        if url.path.startswith(market_images.PATH):
+            name = url.path.removeprefix(market_images.PATH)
+            if not market_images.FILENAME.fullmatch(name):
+                self.send_json(404, {"error": "Image not found."})
+                return
+            try:
+                content, cache = market_images.thumbnail(name)
+            except (OSError, ValueError, SyntaxError, HTTPException):
+                self.respond(302, b"", "text/plain", {"Location": market_images.ORIGIN + name})
+            else:
+                self.respond(200, content, "image/webp", {"Cache-Control": "public, max-age=86400", "X-Polyboard-Cache": cache})
+            return
         query = parse_qs(url.query, keep_blank_values=True)
         if url.path == "/api/watchlist":
             from watchlist import serve
@@ -366,6 +380,8 @@ class Dashboard(BaseHTTPRequestHandler):
             cache_control = "no-cache"
             if mime == "text/html":
                 content = version_links(content)
+                if market_images.ENABLED:
+                    content = content.replace(b"<body", b"<body data-market-thumbnails", 1)
                 version = fingerprint(content)
             elif filename.endswith((".css", ".js", ".svg")) and filename != "watchlist-sw.js" and query.get("v") == [version]:
                 cache_control = "public, max-age=31536000, immutable"

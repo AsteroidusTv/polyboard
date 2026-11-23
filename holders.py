@@ -18,6 +18,7 @@ HISTORY_LIMIT = 100
 RECENT_LIMIT = 20
 DIRECTION_LIMIT = 40
 BATCH_SIZE = 12
+ROSTER_PAGE_SIZE = 12
 REVIEW_LIMIT = 25
 FINAL_STATUSES = ("CLOSED", "REDEEMABLE", "REDEEMABLE_LOST")
 HOUR = 3600
@@ -154,6 +155,18 @@ def get_snapshot(slug, token):
             raise ExpiredSnapshot("This holder snapshot expired. Refresh the holder list to continue.")
         SNAPSHOTS.move_to_end(token)
         return data
+
+
+def compact_roster(data):
+    return {**data, "sides": [{**group, "holder_count": len(group["rows"]), "rows": group["rows"][:ROSTER_PAGE_SIZE]}
+                               for group in data["sides"]]}
+
+
+def compact_profile(profile):
+    result = {key: value for key, value in profile.items() if key != "recent_positions"}
+    if result.get("similar") is not None:
+        result["similar"] = {key: value for key, value in result["similar"].items() if key != "rows"}
+    return result
 
 
 def lifecycle_page(wallet, status, conditions=()):
@@ -562,18 +575,19 @@ def serve(handler, query):
     scope, cohort = first("scope", "focused"), first("limit", "50")
     side, offset = first("side", "0"), first("offset", "0")
     part, take = first("part", "full"), first("take", str(BATCH_SIZE))
+    compact = first("compact") == "1"
     if (part not in ("full", "history", "similar") or len(take) > 2 or not take.isascii()
             or not take.isdecimal() or not 1 <= int(take) <= BATCH_SIZE):
         handler.send_json(400, {"error": "Choose a valid holder analysis batch."})
         return
-    if (not SLUG.fullmatch(slug) or view not in ("list", "signals", "performance", "wallet")
+    if (not SLUG.fullmatch(slug) or view not in ("list", "page", "signals", "performance", "wallet")
             or scope not in ("focused", "broad") or cohort not in COHORTS or side not in ("0", "1")
             or not offset.isascii() or not offset.isdecimal() or len(offset) > 5):
         handler.send_json(400, {"error": "Choose a market and a valid holder sample."})
         return
     try:
         headers = None
-        if view in ("performance", "wallet"):
+        if view in ("page", "performance", "wallet"):
             data = get_snapshot(slug, first("snapshot"))
             rows = data["sides"][int(side)]["rows"]
             start = int(offset)
@@ -592,11 +606,15 @@ def serve(handler, query):
                 results, cache = HOLDER_BATCHES.read(key, lambda: performance(data["market"], sample, scope, part,
                                                                              include_stats=part == "full"),
                                                      ttl=120, cache_if=ready)
+                if compact:
+                    results = {**results, "profiles": [compact_profile(row) for row in results["profiles"]]}
                 payload = {**results, "offset": start, "next_offset": end if end < len(rows) else None}
                 headers = {"X-Polyboard-Cache": cache}
             elif start >= len(rows):
-                handler.send_json(404, {"error": "This wallet is outside the selected sample."})
+                handler.send_json(404, {"error": "This selection is outside the holder sample."})
                 return
+            elif view == "page":
+                payload = {"rows": rows[start:start + ROSTER_PAGE_SIZE], "offset": start}
             else:
                 wallet = rows[start]["wallet"]
                 summary = READ_POOL.submit(stats, wallet) if not data["market"]["closed"] else None
@@ -607,6 +625,8 @@ def serve(handler, query):
                 handler.send_json(404, {"error": "This market does not have two supported outcome tokens."})
                 return
             payload = roster(market, cohort, int(time())) if view == "list" else signals(market)
+            if view == "list" and compact:
+                payload = compact_roster(payload)
     except ExpiredSnapshot as error:
         handler.send_json(409, {"error": str(error)})
         return

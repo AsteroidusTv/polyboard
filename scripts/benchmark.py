@@ -54,17 +54,33 @@ def run(args):
         if summary.get("partial"):
             raise ValueError("Trade summary returned incomplete data")
         measure("wallet_executions", "/api/trades", wallet, "trades")
-    roster = measure("holder_roster", "/api/holders", {"market": args.market, "limit": "50"}, "sides")
+    roster = measure("holder_roster", "/api/holders", {"market": args.market, "limit": args.cohort, "compact": 1}, "sides")
     with_holders = next((i for i, group in enumerate(roster["sides"]) if group["rows"]), None)
     if with_holders is not None:
+        group = roster["sides"][with_holders]
+        total = group["holder_count"]
+        if len(group["rows"]) != min(total, 12):
+            raise ValueError("The initial holder list did not return one page")
+        coverage["holders_in_sample"] = total
+        if total > 12:
+            offset = ((total - 1) // 12) * 12
+            tail = measure("holder_page", "/api/holders", {"market": args.market, "snapshot": roster["snapshot"],
+                           "view": "page", "side": with_holders, "offset": offset}, "rows")
+            if len(tail["rows"]) != total - offset:
+                raise ValueError("The last holder page was incomplete")
         profiles = measure("first_holder_batch", "/api/holders", {"market": args.market, "snapshot": roster["snapshot"],
-                           "view": "performance", "side": with_holders, "part": "history", "take": 4}, "profiles")
-        expected = min(4, len(roster["sides"][with_holders]["rows"]))
+                           "view": "performance", "side": with_holders, "part": "history", "take": 4, "compact": 1}, "profiles")
+        expected = min(4, total)
         if len(profiles["profiles"]) != expected or not any(row["history_available"] for row in profiles["profiles"]):
             raise ValueError("The first holder batch did not return usable histories")
         coverage["holders_analyzed"] = expected
     else:
         coverage["holders_analyzed"] = 0
+    filename = (roster["market"].get("image") or "").removeprefix("https://polymarket-upload.s3.us-east-2.amazonaws.com/")
+    if b"<body data-market-thumbnails" in html and re.fullmatch(r"[\w-][\w.-]{0,190}\.(?:png|jpe?g|webp)", filename, re.I | re.ASCII):
+        image = measure("market_thumbnail", "/media/market/v1/" + filename)
+        if image[:4] != b"RIFF" or image[8:12] != b"WEBP":
+            raise ValueError("The market thumbnail was not served as WebP")
     chart = measure("market_chart", "/api/market-history", {"token": roster["market"]["tokens"][0]}, "points")
     if chart.get("price_error"):
         raise ValueError("The market chart could not read prices")
@@ -84,6 +100,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", default="http://127.0.0.1:8765")
     parser.add_argument("--market", default=DEFAULT_MARKET)
+    parser.add_argument("--cohort", choices=("25", "50", "100", "1000", "all"), default="50")
     parser.add_argument("--precedent-market", help="Use a separate market with known historical comparisons")
     parser.add_argument("--wallet", help="Also verify positions, P&L and trade history for a public wallet")
     parser.add_argument("--samples", type=int, choices=range(1, 6), default=3)

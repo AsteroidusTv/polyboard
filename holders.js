@@ -30,7 +30,7 @@
   const date = new Intl.DateTimeFormat("en-US", {dateStyle: "medium", timeStyle: "short"});
   const day = new Intl.DateTimeFormat("en-US", {dateStyle: "medium"});
   const PAGE_SIZE = 12;
-  const BATCH_SIZE = 4;
+  const FIRST_BATCH = 4;
   const cohort = byId("holder-limit");
   const scope = byId("holder-scope");
   const outcomeButtons = [...byId("holder-outcomes").children];
@@ -46,8 +46,10 @@
   const scanMeter = byId("holder-scan-meter");
   const scanPercent = byId("holder-scan-percent");
   const stopButton = byId("holder-stop");
-  let available, listRequest, scan, walletRequest, reviewRequest;
+  let available, listRequest, pageRequest, scan, walletRequest, reviewRequest;
   let loadingRoster = false;
+  let rosterPages;
+  let pageError = "";
   let slices = newSlices();
   let side = 0;
   let page = 0;
@@ -55,7 +57,7 @@
 
   function newSlices() {
     return Object.fromEntries(Object.entries({history: ["recent", "history"], similar: ["similar"]}).map(([part, periods]) => [part,
-      [0, 1].map(() => ({offsets: new Set(), profiles: new Map(), incomplete: false, comparableCount: null,
+      [0, 1].map(() => ({ranks: new Set(), profiles: new Map(), incomplete: false, comparableCount: null,
         totals: Object.fromEntries(periods.map((key) => [key, {profit: 0, loss: 0, right: 0, wrong: 0, wallets: 0}]))}))]));
   }
 
@@ -63,10 +65,15 @@
     return period === "similar" ? "similar" : "history";
   }
 
+  function totalHolders(index) {
+    const group = available.sides[index];
+    return group.holder_count ?? group.rows.length;
+  }
+
   function addProfiles(slice, data) {
-    slice.offsets.add(data.offset);
     slice.comparableCount = data.similar_markets;
-    for (const row of data.profiles) {
+    for (const [index, row] of data.profiles.entries()) {
+      slice.ranks.add(data.offset + index);
       if (slice.profiles.has(row.wallet)) continue;
       slice.profiles.set(row.wallet, row);
       slice.incomplete ||= row.history_complete === false;
@@ -119,7 +126,7 @@
       : (market.closes_at ? "Scheduled end " + timestamp(market.closes_at) : "Open market");
     const image = byId("holder-market-icon");
     image.hidden = !market.image?.startsWith("https://");
-    if (!image.hidden) image.src = market.image;
+    if (!image.hidden) image.src = DashboardWidgets.marketImageSource(market.image);
     const note = byId("holder-historical-note");
     note.hidden = !market.closed;
     note.textContent = "Retrospective view. The roster shows remaining shares today. Redeemed wallets may be absent. Performance uses records available before market close.";
@@ -128,7 +135,7 @@
       const group = available.sides[index];
       button.dataset.tone = outcomeTone(group.label, index);
       const label = node("strong", group.label, "holder-outcome-label");
-      const coverage = node("small", count.format(group.rows.length) + " in sample", "muted");
+      const coverage = node("small", count.format(totalHolders(index)) + " in sample", "muted");
       coverage.id = "holder-outcome-count-" + index;
       button.replaceChildren(label, coverage);
       button.setAttribute("aria-label", group.label);
@@ -203,7 +210,7 @@
   function renderList() {
     if (!available) return;
     const group = available.sides[side];
-    const shown = group.rows.length;
+    const shown = totalHolders(side);
     const {profiles, totals, incomplete, comparableCount} = slices[analysisPart()][side];
     const record = totals[period];
     byId("holder-results").replaceChildren(
@@ -241,7 +248,25 @@
     head[2].textContent = period === "similar" ? "Matched markets" : "Profitable markets";
     const body = byId("holder-rows");
     const focus = body.contains(document.activeElement) ? document.activeElement.dataset.wallet : undefined;
-    const rows = group.rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map((holder, index) => {
+    const visible = rosterPages[side].get(page);
+    if (shown && !visible) {
+      const row = node("tr");
+      const cell = node("td");
+      cell.colSpan = head.length;
+      const message = node("span", pageError || "Loading holders…", pageError ? "negative" : "muted");
+      message.setAttribute("role", pageError ? "alert" : "status");
+      cell.append(message);
+      if (pageError) {
+        const retry = node("button", "Try again", "text-button");
+        retry.type = "button";
+        retry.addEventListener("click", loadPage);
+        cell.append(" ", retry);
+      }
+      row.append(cell);
+      body.replaceChildren(row);
+      return;
+    }
+    const rows = (visible || []).map((holder, index) => {
       const rank = page * PAGE_SIZE + index;
       const row = node("tr");
       const profile = profiles.get(holder.wallet);
@@ -299,6 +324,9 @@
     }
     stop();
     listRequest?.abort();
+    pageRequest?.abort();
+    pageRequest = undefined;
+    pageError = "";
     const current = new AbortController();
     listRequest = current;
     const selected = cohort.value;
@@ -310,8 +338,10 @@
     cohort.disabled = true;
     scanButton.disabled = true;
     try {
-      available = await fetchHolders("list", {limit: selected}, current.signal);
+      const data = await fetchHolders("list", {limit: selected, compact: 1}, current.signal);
       if (current.signal.aborted) return;
+      available = data;
+      rosterPages = data.sides.map((group) => new Map([[0, group.rows.slice(0, PAGE_SIZE)]]));
       loadingRoster = false;
       slices = newSlices();
       page = 0;
@@ -325,13 +355,14 @@
       }).catch(() => {
         if (!current.signal.aborted) byId("holder-signal").textContent = "Trading activity couldn’t load.";
       });
-      if (available.sides[side].rows.length) analyze(false);
+      analyze(false);
     } catch (error) {
       if (current.signal.aborted) return;
       loadingRoster = false;
       if (available) {
         cohort.value = available.cohort;
         renderList();
+        loadPage();
       }
       byId("holder-error").querySelector("p").textContent = error.message || "Holder list couldn’t load.";
       byId("holder-error").hidden = false;
@@ -349,25 +380,58 @@
     scan = undefined;
   }
 
+  async function loadPage() {
+    pageRequest?.abort();
+    pageRequest = undefined;
+    pageError = "";
+    if (!available || loadingRoster || rosterPages[side].has(page)) return;
+    const selection = side, selectedPage = page;
+    const current = new AbortController();
+    pageRequest = current;
+    renderList();
+    try {
+      const data = await fetchHolders("page", {snapshot: available.snapshot, side: selection, offset: selectedPage * PAGE_SIZE}, current.signal);
+      if (current.signal.aborted) return;
+      rosterPages[selection].set(selectedPage, data.rows);
+    } catch (error) {
+      if (!current.signal.aborted) pageError = error.message || "Holder page couldn’t load.";
+    } finally {
+      if (pageRequest === current) {
+        pageRequest = undefined;
+        renderList();
+      }
+    }
+  }
+
   async function analyze(all) {
     if (scan || !available || loadingRoster) return;
-    const selection = side, part = analysisPart(), slice = slices[part][side], size = available.sides[side].rows.length;
+    const selection = side, part = analysisPart(), slice = slices[part][side], size = totalHolders(side);
     if (part === "similar" && slice.comparableCount === 0) return;
     const start = all ? 0 : page * PAGE_SIZE;
     const end = all ? size : Math.min(start + PAGE_SIZE, size);
-    const offsets = Array.from({length: Math.ceil((end - start) / BATCH_SIZE)}, (_, index) => start + index * BATCH_SIZE)
-      .filter((offset) => !slice.offsets.has(offset));
-    if (!offsets.length) return;
+    const batches = [];
+    for (let rank = start; rank < end;) {
+      if (slice.ranks.has(rank)) {
+        rank++;
+        continue;
+      }
+      const offset = rank;
+      const limit = Math.min(end, offset + (offset === start ? FIRST_BATCH : PAGE_SIZE));
+      do rank++; while (rank < limit && !slice.ranks.has(rank));
+      batches.push({offset, take: rank - offset});
+    }
+    if (!batches.length) return;
     const controller = new AbortController();
     const current = {controller, preview: !all};
     scan = current;
     scanStatus.classList.remove("negative");
     renderList();
     try {
-      for (const offset of offsets) {
+      for (const {offset, take} of batches) {
         const data = await fetchHolders("performance", {snapshot: available.snapshot, side: selection, offset,
-          part, scope: scope.value, take: BATCH_SIZE}, controller.signal);
+          part, scope: scope.value, take, compact: 1}, controller.signal);
         if (controller.signal.aborted) return;
+        if (part === "similar" && data.similar_markets === null) throw new Error("Comparable market data couldn’t load. Select Analyze holders to retry.");
         addProfiles(slice, data);
         renderList();
         if (part === "similar" && data.similar_markets === 0) break;
@@ -401,7 +465,7 @@
     thumb.setAttribute("aria-hidden", "true");
     if (row.image?.startsWith("https://")) {
       const image = node("img");
-      image.src = row.image;
+      image.src = DashboardWidgets.marketImageSource(row.image);
       image.alt = "";
       image.loading = "lazy";
       image.decoding = "async";
@@ -441,8 +505,10 @@
     const common = {snapshot: available.snapshot, side, scope: scope.value};
     const cached = slices;
     async function detail(part) {
-      return cached[part][common.side].profiles.get(holder.wallet) ||
-        (await fetchHolders("performance", {...common, part, offset: rank, take: 1}, current.signal)).profiles[0];
+      const record = cached[part][common.side].profiles.get(holder.wallet);
+      if (part === "similar" && cached.similar[common.side].comparableCount === 0) return {similar: {rows: []}};
+      if (Array.isArray(part === "history" ? record?.recent_positions : record?.similar?.rows)) return record;
+      return (await fetchHolders("performance", {...common, part, offset: rank, take: 1}, current.signal)).profiles[0];
     }
     let profile, similar, latest;
     function show() {
@@ -553,10 +619,11 @@
     stop();
     side = index;
     page = 0;
+    loadPage();
     scanStatus.classList.remove("negative");
     outcomeButtons.forEach((tab, position) => tab.setAttribute("aria-pressed", String(position === side)));
     renderList();
-    if (available.sides[side].rows.length) analyze(false);
+    analyze(false);
   }));
   byId("holder-period").addEventListener("click", (event) => {
     const button = event.target.closest("button[data-period]");
@@ -575,6 +642,7 @@
     byId(key).addEventListener("click", () => {
       page += amount;
       if (scan?.preview) stop();
+      loadPage();
       renderList();
       if (!scan) analyze(false);
     });
@@ -607,6 +675,14 @@
   reviewRun.addEventListener("click", () => monitor(true));
   reviewConnect.addEventListener("click", () => { reviewDialog.close(); DashboardSettings.open("codex"); });
   reviewDialog.addEventListener("close", () => { if (!reviewDialog.open) reviewRequest?.abort(); });
-  window.addEventListener("pagehide", () => { stop(); listRequest?.abort(); walletRequest?.abort(); reviewRequest?.abort(); });
+  window.addEventListener("pagehide", () => { stop(); listRequest?.abort(); pageRequest?.abort(); walletRequest?.abort(); reviewRequest?.abort(); });
+  window.addEventListener("pageshow", (event) => {
+    if (!event.persisted) return;
+    if (!available || loadingRoster) load();
+    else {
+      loadPage();
+      analyze(false);
+    }
+  });
   load();
 })();

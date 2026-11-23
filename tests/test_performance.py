@@ -1,9 +1,11 @@
 import unittest
 from concurrent.futures import Future, ThreadPoolExecutor
+from io import BytesIO
 from threading import Event
 from unittest.mock import Mock, patch
 
 import holders
+import market_images
 import server
 from read_cache import ReadCache
 
@@ -76,6 +78,25 @@ class ReadCacheTests(unittest.TestCase):
 
 
 class HolderBatchTests(unittest.TestCase):
+    def test_compact_roster_preserves_totals_and_snapshot_rows(self):
+        rows = [{"wallet": rank} for rank in range(16)]
+        snapshot = {"snapshot": "sample", "sides": [{"rows": rows, "shares": 40}, {"rows": [], "shares": 0}]}
+        compact = holders.compact_roster(snapshot)
+        first, second = compact["sides"]
+        self.assertEqual((len(first["rows"]), first["holder_count"], first["shares"]), (12, 16, 40))
+        self.assertEqual(second["holder_count"], 0)
+        handler = Mock()
+        with patch.object(holders, "get_snapshot", return_value=snapshot):
+            holders.serve(handler, {"market": ["market"], "view": ["page"], "snapshot": ["sample"], "offset": ["12"]})
+        handler.send_json.assert_called_once_with(200, {"offset": 12, "rows": rows[12:]}, None)
+
+    def test_compact_profiles_leave_cached_detail_available(self):
+        original = {"history": {"profit": 3}, "recent_positions": ["detail"],
+                    "similar": {"right": 2, "rows": ["pick"]}}
+        self.assertEqual(holders.compact_profile(original), {"history": {"profit": 3}, "similar": {"right": 2}})
+        self.assertEqual(original["recent_positions"], ["detail"])
+        self.assertEqual(original["similar"]["rows"], ["pick"])
+
     def test_initial_history_keeps_grading_and_defers_similar_lookup(self):
         wallet = "0x" + "1" * 40
         market = {"condition": "0x" + "a" * 64, "closed": False, "resolved_at": None, "closed_at": None}
@@ -96,3 +117,22 @@ class HolderBatchTests(unittest.TestCase):
             self.assertEqual(match["similar_markets"], 0)
             self.assertEqual(match["profiles"][0]["similar"]["right"], 0)
             history.assert_called_once_with(wallet)
+
+
+class MarketImageTests(unittest.TestCase):
+    def test_only_supported_polymarket_object_names_are_downloaded(self):
+        self.assertIsNotNone(market_images.FILENAME.fullmatch("fr27-david-lisnard-04e491dec1.jpg"))
+        for name in ("../private.jpg", "//elsewhere.test/photo.jpg", "image.svg", "image.jpg?other=1"):
+            with patch.object(market_images.DOWNLOAD, "open") as download, self.assertRaises(ValueError):
+                market_images.thumbnail(name)
+            download.assert_not_called()
+
+    @unittest.skipUnless(market_images.ENABLED, "Optional WebP conversion is unavailable")
+    def test_resize_preserves_aspect_ratio_and_transparency(self):
+        original = market_images.Image.new("RGBA", (512, 256), (24, 80, 180, 120))
+        content = BytesIO()
+        original.save(content, "PNG")
+        with market_images.Image.open(BytesIO(market_images.resize(content.getvalue()))) as result:
+            self.assertEqual(result.size, (128, 64))
+            self.assertEqual(result.format, "WEBP")
+            self.assertEqual(result.getpixel((32, 32))[3], 120)

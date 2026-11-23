@@ -16,6 +16,16 @@
   const input = byId("catalog-query");
   const filtersDialog = byId("catalog-filter-dialog");
   const eventDialog = byId("catalog-event-dialog");
+  const eventViewport = eventDialog.querySelector(".market-dialog-scroll");
+  const eventThumbnails = new IntersectionObserver((entries, observer) => {
+    for (const {target, isIntersecting} of entries) {
+      if (isIntersecting && target.isConnected) {
+        target.src = target.dataset.imageSrc;
+        delete target.dataset.imageSrc;
+        observer.unobserve(target);
+      }
+    }
+  }, {root: eventViewport, rootMargin: "160px 0px"});
   const eventSearch = byId("catalog-event-search");
   const eventCanvas = byId("event-history-chart");
   const eventCursor = byId("event-history-cursor");
@@ -230,13 +240,19 @@
     byId("catalog-filter-error").hidden = true;
   }
 
-  function imageFor(record) {
+  function imageFor(record, defer = false) {
     if (typeof record.image !== "string" || !record.image.startsWith("https://")) return null;
     const image = node("img");
-    image.src = record.image;
     image.alt = "";
+    image.decoding = "async";
     image.loading = "lazy";
     image.addEventListener("error", () => image.remove(), {once: true});
+    const source = DashboardWidgets.marketImageSource(record.image);
+    if (defer) {
+      image.fetchPriority = "low";
+      image.dataset.imageSrc = source;
+      eventThumbnails.observe(image);
+    } else image.src = source;
     return image;
   }
 
@@ -305,7 +321,7 @@
     row.setAttribute("aria-haspopup", "dialog");
     row.setAttribute("aria-label", "Show trade · " + market.title);
     const identity = node("span", undefined, "event-row-identity");
-    const image = market.image !== event.image && imageFor(market);
+    const image = market.image !== event.image && imageFor(market, true);
     const series = eventSeries.find((item) => item.market.slug === market.slug);
     if (image) identity.append(image);
     else if (series) {
@@ -329,6 +345,7 @@
   }
 
   function renderEventList() {
+    eventThumbnails.disconnect();
     const sought = normalize(eventSearch.value);
     const rows = eventMarkets.filter((market) => normalize(market.label + " " + market.title).includes(sought));
     const total = matchingMarkets(selectedEvent);
@@ -465,7 +482,7 @@
     await Promise.all(eventSeries.map(async (series) => {
       try {
         const params = new URLSearchParams({token: series.market.token_id});
-        const response = await fetch("/api/market-history?" + params, {signal: timeout});
+        const response = await fetch("/api/market-history?" + params, {signal: timeout, priority: "high"});
         if (!response.ok) return;
         const {points} = await response.json();
         series.points = points.filter(([timestamp, price]) => Number.isFinite(timestamp) && Number.isFinite(price) && price >= 0 && price <= 1);
@@ -485,7 +502,7 @@
     params.set("event", event.slug);
     try {
       const response = await fetch("/api/markets?" + params, {
-        signal: AbortSignal.any([signal, AbortSignal.timeout(12000)])
+        signal: AbortSignal.any([signal, AbortSignal.timeout(12000)]), priority: "high"
       });
       if (!response.ok) throw new Error("Submarkets couldn’t load.");
       const {events} = await response.json();
@@ -536,7 +553,7 @@
     eventListStatus.hidden = eventRetry.hidden = true;
     renderEventList();
     eventDialog.showModal();
-    eventDialog.querySelector(".market-dialog-scroll").scrollTop = 0;
+    eventViewport.scrollTop = 0;
     const signal = eventRequest.signal;
     loadEventHistory(signal);
     if (matchingMarkets(event) > event.markets.length) loadEventMarkets(event, signal);
@@ -772,7 +789,11 @@
   byId("catalog-retry").addEventListener("click", () => load(true));
   eventSearch.addEventListener("input", renderEventList);
   eventRetry.addEventListener("click", () => loadEventMarkets(selectedEvent, eventRequest.signal));
-  eventDialog.addEventListener("close", () => { if (!eventDialog.open) eventRequest?.abort(); });
+  eventDialog.addEventListener("close", () => {
+    if (eventDialog.open) return;
+    eventRequest?.abort();
+    eventThumbnails.disconnect();
+  });
   eventCanvas.addEventListener("pointermove", (event) => {
     if (event.pointerType !== "touch") inspectEventHistory(event);
   });
