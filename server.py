@@ -13,10 +13,11 @@ from pathlib import Path
 from time import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlencode, urlsplit
-from urllib.request import Request, urlopen
+
+from http_reads import data_request
+from read_cache import ReadCache
 
 ROOT = Path(__file__).resolve().parent
-DATA_API = "https://data-api.polymarket.com/v2"
 WALLET = re.compile(r"0x[0-9a-fA-F]{40}")
 CONDITION = re.compile(r"0x[0-9a-fA-F]{64}")
 TOKEN = re.compile(r"[0-9]{1,78}")
@@ -48,15 +49,42 @@ FILES = {
 TRADE_FIELDS = ("title", "icon", "side", "outcome", "price", "size", "timestamp",
                 "token_id", "condition_id", "slug", "transaction_hash")
 ACTIVITY_FIELDS = ("type", "side", "size", "price", "timestamp", "usdc_size", "transaction_hash")
+STATIC_LINK = re.compile(rb'((?:src|href)=")(/[a-z0-9.-]+\.(?:css|js|svg))"')
+CATALOG_FILTERS = ("q", "category", "exclude", "sort", "side", "band", "ends", "after", "before",
+                   "liquidity", "spread", "cursor", "event", "preview")
+RESPONSES = ReadCache(256)
+WALLET_PNL = ReadCache(128)
+POSITION_SETTLEMENTS = ReadCache(192)
+MARKET_PRICES = ReadCache(128)
+MARKET_RESOLUTIONS = ReadCache(512)
+ORDINARY_SETTLEMENTS = ("REDEEMABLE", "REDEEMABLE_LOST")
+COMBO_SETTLEMENTS = ("REDEEMABLE", "RESOLVED_WIN", "RESOLVED_LOSS")
 
 
-def data_request(resource, params, timeout=10):
-    request = Request(f"{DATA_API}/{resource}?{urlencode(params)}", headers={
-        "Accept": "application/json",
-        "User-Agent": "PolymarketLocalDashboard/1.0",
-    })
-    with urlopen(request, timeout=timeout) as response:
-        return json.load(response)
+@lru_cache(maxsize=96)
+def file_snapshot(filename, stamp, size):
+    content = (ROOT / filename).read_bytes()
+    return content, fingerprint(content)
+
+
+def fingerprint(content):
+    return blake2s(content, digest_size=16).hexdigest()
+
+
+def static_file(filename):
+    info = (ROOT / filename).stat()
+    return file_snapshot(filename, info.st_mtime_ns, info.st_size)
+
+
+def version_links(content):
+    def link(match):
+        path = match[2].decode()
+        if path not in FILES or path == "/watchlist-sw.js":
+            return match[0]
+        _, version = static_file(FILES[path][0])
+        return match[1] + match[2] + b"?v=" + version.encode() + b'"'
+
+    return STATIC_LINK.sub(link, content)
 
 
 def data_page(resource, params, timeout=10):
@@ -109,14 +137,18 @@ def chart_points(rows, key):
     return sorted(by_time.items())
 
 
-def fetch_wallet_pnl(wallet, timeout=10):
+def cached_wallet_pnl(wallet, timeout=10, refresh=False):
     params = {"user": wallet.lower(), "interval": "max", "fidelity": "1d"}
-    result = data_request("user-pnl", params, timeout)["data"]
-    return result["points"] if result else []
+
+    def load():
+        result = data_request("user-pnl", params, timeout)["data"]
+        return result["points"] if result else []
+
+    return WALLET_PNL.read(params["user"], load, ttl=30, refresh=refresh)
 
 
-def fetch_portfolio_history(wallet):
-    return {"points": chart_points(fetch_wallet_pnl(wallet), "position_pnl")}
+def fetch_wallet_pnl(wallet, timeout=10, refresh=False):
+    return cached_wallet_pnl(wallet, timeout, refresh)[0]
 
 
 def wallet_rows(wallet, resource, **filters):
@@ -124,16 +156,24 @@ def wallet_rows(wallet, resource, **filters):
             for row in rows]
 
 
-def fetch_portfolio_events(wallet):
+def wallet_settlements(wallet, resource, status, refresh):
+    filters = {} if resource == "positions/combos" else {"include_archived": "true", "filter_amount": 0}
+
+    def load():
+        return wallet_rows(wallet, resource, status=status, **filters)
+
+    return POSITION_SETTLEMENTS.read((wallet, resource, status), load, ttl=20, refresh=refresh)[0]
+
+
+def fetch_portfolio_events(wallet, refresh=False):
     from trade_summary import number, portfolio_settlements
 
     with ThreadPoolExecutor(max_workers=6) as executor:
         activity = executor.submit(wallet_rows, wallet, "activity", start=1, type="REDEEM,DEPOSIT")
-        held = [executor.submit(wallet_rows, wallet, "positions", status=status,
-                                include_archived="true", filter_amount=0)
-                for status in ("REDEEMABLE", "REDEEMABLE_LOST")]
-        combos = [executor.submit(wallet_rows, wallet, "positions/combos", status=status)
-                  for status in ("REDEEMABLE", "RESOLVED_WIN", "RESOLVED_LOSS")]
+        held = [executor.submit(wallet_settlements, wallet, "positions", status, refresh)
+                for status in ORDINARY_SETTLEMENTS]
+        combos = [executor.submit(wallet_settlements, wallet, "positions/combos", status, refresh)
+                  for status in COMBO_SETTLEMENTS]
         rows = activity.result()
         redeemed = [row for row in rows if row.get("type") == "REDEEM"]
         deposits = [{"timestamp": stamp, "amount": amount} for row in rows
@@ -173,17 +213,22 @@ def latest_trading_fees(points):
             "net_paid_usd": net, "timestamp": latest["timestamp"]}
 
 
-@lru_cache(maxsize=128)
-def market_price_series(token, bucket):
+def market_price_series(token):
     rows = (row for page, _ in data_pages("prices-history", {"token_id": token, "interval": "max"})
             for row in page)
     return chart_points(rows, "price")
 
 
 def fetch_market_history(token, condition=None, wallet=None):
-    def resolution():
-        return any(row.get("status", "").lower() == "resolved"
-                   for row in data_request("resolutions", {"condition": condition})["data"])
+    def resolutions():
+        def load():
+            return any(row.get("status", "").lower() == "resolved"
+                       for row in data_request("resolutions", {"condition": condition})["data"])
+
+        return MARKET_RESOLUTIONS.read(condition, load, ttl=3600, cache_if=bool)[0]
+
+    def prices():
+        return MARKET_PRICES.read(token, lambda: market_price_series(token), ttl=30)[0]
 
     def executions():
         params = {"user": wallet.lower(), "condition": condition, "start": 1,
@@ -191,29 +236,37 @@ def fetch_market_history(token, condition=None, wallet=None):
         return [{key: row.get(key) for key in ACTIVITY_FIELDS}
                 for page, _ in data_pages("activity", params) for row in page if row.get("token_id") == token]
 
-    def optional(job):
+    def optional(load):
         try:
-            return job.result() if job else None
+            return load() if load else None
         except (URLError, TimeoutError, ValueError, TypeError, KeyError, AttributeError):
             return None
 
+    if not condition:
+        raw_points = optional(prices)
+        return {"points": raw_points or [], "price_error": raw_points is None, "settled": False, "executions": None}
+
     with ThreadPoolExecutor(max_workers=3) as executor:
-        history = executor.submit(market_price_series, token, int(time() // 30))
-        settled = executor.submit(resolution) if condition else None
-        activity = executor.submit(executions) if condition and wallet else None
-        raw_points = optional(history)
+        history = executor.submit(prices)
+        settled = executor.submit(resolutions)
+        activity = executor.submit(executions) if wallet else None
+        raw_points = optional(history.result)
         return {"points": raw_points or [], "price_error": raw_points is None,
-                "settled": optional(settled) is True, "executions": optional(activity)}
+                "settled": optional(settled.result) is True, "executions": optional(activity.result if activity else None)}
 
 
-def fetch_trade_summary(wallet):
+def fetch_trade_summary(wallet, refresh=False):
     from trade_summary import build_trade_summary
 
-    position_statuses = ("REDEEMABLE", "REDEEMABLE_LOST", "OPEN", "CLOSED")
+    position_statuses = (*ORDINARY_SETTLEMENTS, "OPEN", "CLOSED")
     combo_statuses = ("REDEEMABLE", "OPEN", "RESOLVED_WIN", "RESOLVED_LOSS")
 
     def fetch(resource, **filters):
         try:
+            status = filters.get("status")
+            if (resource == "positions" and status in ORDINARY_SETTLEMENTS or
+                    resource == "positions/combos" and status in COMBO_SETTLEMENTS):
+                return wallet_settlements(wallet, resource, status, refresh)
             return wallet_rows(wallet, resource, **filters)
         except (URLError, TimeoutError, ValueError, TypeError, KeyError, AttributeError):
             logging.warning("Trade summary source unavailable: %s %s", resource, filters.get("status") or "")
@@ -226,7 +279,7 @@ def fetch_trade_summary(wallet):
 
     with ThreadPoolExecutor(max_workers=6) as executor:
         activity = executor.submit(fetch, "activity", start=1)
-        pnl = executor.submit(fetch_wallet_pnl, wallet, 4)
+        pnl = executor.submit(fetch_wallet_pnl, wallet, 4, refresh=refresh)
         positions = [executor.submit(fetch_status, status) for status in position_statuses]
         combos = [executor.submit(fetch, "positions/combos", status=status) for status in combo_statuses]
         position_groups = [job.result() for job in positions]
@@ -244,9 +297,8 @@ def fetch_trade_summary(wallet):
         return {"positions": summary, "trading_fees": fees, "partial": any(group is None for group in sources)}
 
 
-@lru_cache(maxsize=64)
-def recent_trade_summary(wallet, bucket):
-    return fetch_trade_summary(wallet)
+def complete_response(data):
+    return not data.get("partial") and not data.get("price_error")
 
 
 class Dashboard(BaseHTTPRequestHandler):
@@ -269,7 +321,11 @@ class Dashboard(BaseHTTPRequestHandler):
             self.wfile.write(body)
 
     def send_json(self, status, data, headers=None):
-        self.respond(status, json.dumps(data).encode(), headers=headers)
+        self.respond(status, json.dumps(data, separators=(",", ":")).encode(), headers=headers)
+
+    def send_cached_json(self, key, load, *, ttl, refresh=False, cache_if=complete_response):
+        data, cache = RESPONSES.read(key, load, ttl=ttl, refresh=refresh, cache_if=cache_if)
+        self.send_json(200, data, {"X-Polyboard-Cache": cache})
 
     def do_GET(self):
         url = urlsplit(self.path)
@@ -306,12 +362,18 @@ class Dashboard(BaseHTTPRequestHandler):
                 return
         if url.path in FILES:
             filename, mime = FILES[url.path]
-            content = (ROOT / filename).read_bytes()
-            tag = '"' + blake2s(content, digest_size=16).hexdigest() + '"'
+            content, version = static_file(filename)
+            cache_control = "no-cache"
+            if mime == "text/html":
+                content = version_links(content)
+                version = fingerprint(content)
+            elif filename.endswith((".css", ".js", ".svg")) and filename != "watchlist-sw.js" and query.get("v") == [version]:
+                cache_control = "public, max-age=31536000, immutable"
+            tag = f'"{version}"'
             cached = {value.strip().removeprefix("W/") for value in self.headers.get("If-None-Match", "").split(",")}
             unchanged = tag in cached or "*" in cached
             self.respond(304 if unchanged else 200, b"" if unchanged else content, mime,
-                         {"Cache-Control": "no-cache", "ETag": tag})
+                         {"Cache-Control": cache_control, "ETag": tag})
             return
         if url.path == "/api/market-metadata":
             from precedents import SLUG, discovery_market_details
@@ -342,15 +404,19 @@ class Dashboard(BaseHTTPRequestHandler):
         if market_history and (not TOKEN.fullmatch(token) or (condition and not CONDITION.fullmatch(condition))):
             self.send_json(400, {"error": "Invalid market identifier."})
             return
+        address = wallet.lower()
+        refresh = query.get("fresh") == ["1"]
+        key = (url.path, address)
         try:
             if catalog:
                 from market_catalog import CatalogError, browse_markets
 
                 try:
-                    data = browse_markets(query)
+                    filters = tuple((name, tuple(query[name])) for name in CATALOG_FILTERS if name in query)
+                    self.send_cached_json((url.path, filters), lambda: browse_markets(query), ttl=20)
                 except CatalogError as error:
                     self.send_json(400, {"error": str(error)})
-                    return
+                return
             elif precedents:
                 from precedents import SLUG, compare_markets, traded_conditions
 
@@ -368,19 +434,23 @@ class Dashboard(BaseHTTPRequestHandler):
                     self.send_json(404, {"error": "Select a Polymarket market with a Yes/No outcome."})
                     return
             elif url.path == "/api/trades":
-                data = fetch_trades(wallet, cursor)
+                self.send_cached_json((*key, cursor), lambda: fetch_trades(address, cursor), ttl=20, refresh=refresh)
+                return
             elif url.path == "/api/trade-summary":
-                address = wallet.lower()
-                data = (fetch_trade_summary(address) if query.get("fresh") == ["1"]
-                        else recent_trade_summary(address, int(time() // 15)))
+                self.send_cached_json(key, lambda: fetch_trade_summary(address, refresh=refresh), ttl=25, refresh=refresh)
+                return
             elif url.path == "/api/portfolio-history":
-                data = fetch_portfolio_history(wallet)
+                points, cache = cached_wallet_pnl(address, refresh=refresh)
+                self.send_json(200, {"points": chart_points(points, "position_pnl")}, {"X-Polyboard-Cache": cache})
+                return
             elif url.path == "/api/portfolio-events":
-                data = fetch_portfolio_events(wallet)
+                self.send_cached_json(key, lambda: fetch_portfolio_events(address, refresh=refresh), ttl=20, refresh=refresh)
+                return
             elif market_history:
                 data = fetch_market_history(token, condition, wallet)
             else:
-                data = {"positions": fetch_positions(wallet)}
+                self.send_cached_json(key, lambda: {"positions": fetch_positions(address)}, ttl=8, refresh=refresh)
+                return
         except HTTPError as error:
             self.send_json(502, {"error": f"The Polymarket API returned an error ({error.code})."})
         except (URLError, TimeoutError):

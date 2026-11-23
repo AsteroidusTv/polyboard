@@ -30,6 +30,7 @@
   const date = new Intl.DateTimeFormat("en-US", {dateStyle: "medium", timeStyle: "short"});
   const day = new Intl.DateTimeFormat("en-US", {dateStyle: "medium"});
   const PAGE_SIZE = 12;
+  const BATCH_SIZE = 4;
   const cohort = byId("holder-limit");
   const scope = byId("holder-scope");
   const outcomeButtons = [...byId("holder-outcomes").children];
@@ -47,10 +48,38 @@
   const stopButton = byId("holder-stop");
   let available, listRequest, scan, walletRequest, reviewRequest;
   let loadingRoster = false;
-  let slices = [new Map(), new Map()];
+  let slices = newSlices();
   let side = 0;
   let page = 0;
   let period = "recent";
+
+  function newSlices() {
+    return Object.fromEntries(Object.entries({history: ["recent", "history"], similar: ["similar"]}).map(([part, periods]) => [part,
+      [0, 1].map(() => ({offsets: new Set(), profiles: new Map(), incomplete: false, comparableCount: null,
+        totals: Object.fromEntries(periods.map((key) => [key, {profit: 0, loss: 0, right: 0, wrong: 0, wallets: 0}]))}))]));
+  }
+
+  function analysisPart() {
+    return period === "similar" ? "similar" : "history";
+  }
+
+  function addProfiles(slice, data) {
+    slice.offsets.add(data.offset);
+    slice.comparableCount = data.similar_markets;
+    for (const row of data.profiles) {
+      if (slice.profiles.has(row.wallet)) continue;
+      slice.profiles.set(row.wallet, row);
+      slice.incomplete ||= row.history_complete === false;
+      for (const [key, total] of Object.entries(slice.totals)) {
+        const direction = key === "similar" ? row.similar : key === "recent" ? row.recent_direction : row.direction;
+        total.profit += row[key]?.profit || 0;
+        total.loss += row[key]?.loss || 0;
+        total.right += direction?.right || 0;
+        total.wrong += direction?.wrong || 0;
+        if (key === "similar" ? direction?.right + direction?.wrong > 0 : row.history_available) total.wallets++;
+      }
+    }
+  }
 
   function node(tag, text, className) {
     const element = document.createElement(tag);
@@ -152,13 +181,12 @@
   }
 
   function renderScanProgress(checked = 0, total = 0) {
-    const preparing = loadingRoster || scan?.preview;
-    const pending = preparing || Boolean(scan);
+    const pending = loadingRoster || Boolean(scan);
     const failed = scanStatus.classList.contains("negative");
     scanProgress.hidden = !pending && !checked && !failed;
     scanMeter.hidden = !pending && !checked;
-    scanPercent.hidden = Boolean(preparing) || !total || (!pending && !checked);
-    if (preparing) {
+    scanPercent.hidden = loadingRoster || !total || (!pending && !checked);
+    if (loadingRoster) {
       scanMeter.removeAttribute("value");
     } else if (total) {
       scanMeter.max = total;
@@ -168,7 +196,6 @@
     if (failed && !pending) return;
     const progress = count.format(checked) + " / " + count.format(total) + " wallets checked";
     const message = loadingRoster ? "Loading holder list…"
-      : scan?.preview ? "Analyzing wallets on this page…"
       : pending ? progress + "…" : checked ? progress : "";
     if (scanStatus.textContent !== message) scanStatus.textContent = message;
   }
@@ -177,44 +204,32 @@
     if (!available) return;
     const group = available.sides[side];
     const shown = group.rows.length;
-    const map = slices[side];
-    const profiles = [...map.values()].flatMap(({profiles}) => profiles);
-    const byWallet = new Map(profiles.map((row) => [row.wallet, row]));
-    const record = {profit: 0, loss: 0, right: 0, wrong: 0};
-    for (const row of profiles) {
-      if (period !== "similar") {
-        record.profit += row[period].profit;
-        record.loss += row[period].loss;
-      }
-      const direction = period === "recent" ? row.recent_direction : period === "history" ? row.direction : row.similar;
-      record.right += direction?.right || 0;
-      record.wrong += direction?.wrong || 0;
-    }
-    const wallets = profiles.filter((row) => period === "similar" ? row.similar?.right + row.similar?.wrong > 0 : row.history_available).length;
+    const {profiles, totals, incomplete, comparableCount} = slices[analysisPart()][side];
+    const record = totals[period];
     byId("holder-results").replaceChildren(
       badge("Holders in sample", count.format(shown), shown ? shares.format(group.shares) + " net shares" : ""),
       badge("Top 5 concentration", group.top_five_pct == null ? "—" : group.top_five_pct + "%", "Of sampled shares"),
       badge(period === "similar" ? "Correct comparable picks" : "Profitable markets",
         period === "similar" ? rateValue(record, "right", "wrong") : rateValue(record, "profit", "loss"),
-        wallets ? count.format(wallets) + " wallets with records" : "Wallet coverage pending")
+        record.wallets ? count.format(record.wallets) + " wallets with records" : profiles.size ? "No graded records yet" : "Wallet coverage pending")
     );
-    const checked = byWallet.size;
-    const comparableCount = profiles.length ? [...map.values()].at(-1)?.similar_markets : null;
+    const checked = profiles.size;
     const notes = [];
     if (available.partial) notes.push("Polymarket returned a partial holder list.");
     else if (available.cohort === "all" && !available.complete) notes.push("All available is capped at " + count.format(available.cap) + " per outcome.");
     if (period === "similar") {
       if (comparableCount === null) notes.push("Comparable market coverage has yet to load or is unavailable.");
       else notes.push(comparableCount ? comparableCount + " resolved markets in the comparison sample." : "No comparable verified resolutions found in this scope.");
-    } else if (profiles.some((row) => !row.history_complete)) {
+    } else if (incomplete) {
       notes.push("Some wallet histories are sampled or incomplete.");
     }
     byId("holder-table-note").textContent = notes.join(" ");
-    scanButton.disabled = loadingRoster || Boolean(scan) || !shown || checked >= shown;
-    scanButton.textContent = scan ? "Analyzing…" : checked === shown && shown ? "Analysis complete"
+    const noComparison = period === "similar" && comparableCount === 0;
+    scanButton.disabled = loadingRoster || Boolean(scan) || noComparison || !shown || checked >= shown;
+    scanButton.textContent = scan ? "Analyzing…" : noComparison ? "No comparable markets" : checked === shown && shown ? "Analysis complete"
       : checked ? "Analyze remaining " + count.format(shown - checked) : "Analyze holders";
     stopButton.hidden = !scan;
-    renderScanProgress(checked, shown);
+    renderScanProgress(noComparison ? 0 : checked, shown);
     byId("holder-empty").hidden = Boolean(shown);
     byId("holder-table").hidden = !shown;
     byId("holder-pages").hidden = shown <= PAGE_SIZE;
@@ -229,7 +244,7 @@
     const rows = group.rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map((holder, index) => {
       const rank = page * PAGE_SIZE + index;
       const row = node("tr");
-      const profile = byWallet.get(holder.wallet);
+      const profile = profiles.get(holder.wallet);
       const wallet = node("button", undefined, "text-button holder-wallet-button");
       wallet.type = "button";
       wallet.dataset.wallet = holder.wallet;
@@ -298,7 +313,7 @@
       available = await fetchHolders("list", {limit: selected}, current.signal);
       if (current.signal.aborted) return;
       loadingRoster = false;
-      slices = [new Map(), new Map()];
+      slices = newSlices();
       page = 0;
       scanStatus.classList.remove("negative");
       renderMarket();
@@ -336,9 +351,12 @@
 
   async function analyze(all) {
     if (scan || !available || loadingRoster) return;
-    const selection = side, map = slices[side], size = available.sides[side].rows.length;
-    const pages = all ? Array.from({length: Math.ceil(size / PAGE_SIZE)}, (_, index) => index * PAGE_SIZE) : [page * PAGE_SIZE];
-    const offsets = pages.filter((offset) => offset < size && !map.has(offset));
+    const selection = side, part = analysisPart(), slice = slices[part][side], size = available.sides[side].rows.length;
+    if (part === "similar" && slice.comparableCount === 0) return;
+    const start = all ? 0 : page * PAGE_SIZE;
+    const end = all ? size : Math.min(start + PAGE_SIZE, size);
+    const offsets = Array.from({length: Math.ceil((end - start) / BATCH_SIZE)}, (_, index) => start + index * BATCH_SIZE)
+      .filter((offset) => !slice.offsets.has(offset));
     if (!offsets.length) return;
     const controller = new AbortController();
     const current = {controller, preview: !all};
@@ -347,10 +365,12 @@
     renderList();
     try {
       for (const offset of offsets) {
-        const data = await fetchHolders("performance", {snapshot: available.snapshot, side: selection, offset, scope: scope.value}, controller.signal);
+        const data = await fetchHolders("performance", {snapshot: available.snapshot, side: selection, offset,
+          part, scope: scope.value, take: BATCH_SIZE}, controller.signal);
         if (controller.signal.aborted) return;
-        map.set(offset, data);
+        addProfiles(slice, data);
         renderList();
+        if (part === "similar" && data.similar_markets === 0) break;
       }
     } catch (error) {
       if (controller.signal.aborted) return;
@@ -419,37 +439,40 @@
       cutoff, note: Number.isFinite(cutoff) ? "History before market close · " + timestamp(cutoff) : undefined
     });
     const common = {snapshot: available.snapshot, side, scope: scope.value};
-    const base = Math.floor(rank / PAGE_SIZE) * PAGE_SIZE;
-    const result = slices[side].get(base);
-    const detail = result || fetchHolders("performance", {...common, offset: base}, current.signal);
-    const [history, latest] = await Promise.allSettled([detail, fetchHolders("wallet", {...common, offset: rank}, current.signal)]);
-    if (current.signal.aborted) return;
-    const profile = history.value?.profiles.find((item) => item.wallet === holder.wallet);
-    const top = document.createDocumentFragment();
-    if (profile) {
+    const cached = slices;
+    async function detail(part) {
+      return cached[part][common.side].profiles.get(holder.wallet) ||
+        (await fetchHolders("performance", {...common, part, offset: rank, take: 1}, current.signal)).profiles[0];
+    }
+    let profile, similar, latest;
+    function show() {
+      if (current.signal.aborted) return;
       const metrics = node("dl", undefined, "holder-metrics");
-      metrics.append(badge("Recent profitable", rateValue(profile.recent, "profit", "loss")),
-        badge("History correct", rateValue(profile.direction, "right", "wrong"), profile.direction_checked + " markets checked"),
-        badge("Similar correct", rateValue(profile.similar, "right", "wrong")));
-      top.append(metrics);
-      if (Number.isFinite(profile.realized_market_pnl)) top.append(node("p",
-        "Polymarket lifetime realized market P&L " + money.format(profile.realized_market_pnl), "holder-note"));
-      top.append(walletSection("Decided positions", profile.recent_positions, (row) =>
+      metrics.append(badge("Recent profitable", rateValue(profile?.recent, "profit", "loss")),
+        badge("History correct", rateValue(profile?.direction, "right", "wrong"), profile ? profile.direction_checked + " markets checked" : ""),
+        badge("Similar correct", rateValue(similar?.similar, "right", "wrong")));
+      const sections = [metrics];
+      const pnl = latest?.stats?.realized_market_pnl;
+      if (Number.isFinite(pnl)) sections.push(node("p", "Polymarket lifetime realized market P&L " + money.format(pnl), "holder-note"));
+      sections.push(walletSection("Decided positions", profile?.recent_positions || [], (row) =>
         walletItem(row, node("span", Number.isFinite(row.pnl) ? money.format(row.pnl) : "P&L unavailable", moneyTone(row.pnl ?? NaN)),
           timestamp(row.at, day)),
-      "No decided positions were returned."));
-      top.append(walletSection("Most recent comparable picks", profile.similar?.rows || [], (row) =>
+      profile === undefined ? "Loading decided positions…" : profile ? "No decided positions were returned." : "Wallet performance couldn’t load."));
+      sections.push(walletSection("Most recent comparable picks", similar?.similar?.rows || [], (row) =>
         walletItem(row, outcomeChip(row.outcome), node("span", row.correct ? "Correct" : "Incorrect", row.correct ? "positive" : "negative"),
           timestamp(row.at, day)),
-      "No graded comparable picks in this sample."));
-    } else top.append(node("p", "Wallet performance couldn’t load.", "muted"));
-    top.append(walletSection("Latest public fills", latest.value?.fills || [], (row) =>
-      walletItem(row, node("span", row.side === "BUY" ? "Buy" : row.side === "SELL" ? "Sell" : "Fill", "holder-fill " + (row.side === "BUY" ? "buy" : row.side === "SELL" ? "sell" : "")),
-        outcomeChip(row.outcome),
-        Number.isFinite(row.price) ? chance.format(row.price * 100) + "¢" : "",
-        Number.isFinite(row.size) ? shares.format(row.size) + " shares" : "", timestamp(row.at)),
-    latest.status === "rejected" ? "Public fills couldn’t load." : "No fills were returned."));
-    body.replaceChildren(top);
+      similar === undefined ? "Checking comparable markets…" : similar?.similar ? "No graded comparable picks in this sample." : "Comparable picks couldn’t load."));
+      sections.push(walletSection("Latest public fills", latest?.fills || [], (row) =>
+        walletItem(row, node("span", row.side === "BUY" ? "Buy" : row.side === "SELL" ? "Sell" : "Fill", "holder-fill " + (row.side === "BUY" ? "buy" : row.side === "SELL" ? "sell" : "")),
+          outcomeChip(row.outcome), Number.isFinite(row.price) ? chance.format(row.price * 100) + "¢" : "",
+          Number.isFinite(row.size) ? shares.format(row.size) + " shares" : "", timestamp(row.at)),
+      latest === undefined ? "Loading public fills…" : latest ? "No fills were returned." : "Public fills couldn’t load."));
+      body.replaceChildren(...sections);
+    }
+    show();
+    detail("history").catch(() => null).then((result) => { profile = result ?? null; show(); });
+    detail("similar").catch(() => null).then((result) => { similar = result ?? null; show(); });
+    fetchHolders("wallet", {...common, offset: rank}, current.signal).catch(() => null).then((result) => { latest = result; show(); });
   }
 
   function renderReview({report, snapshot}) {
@@ -537,14 +560,21 @@
   }));
   byId("holder-period").addEventListener("click", (event) => {
     const button = event.target.closest("button[data-period]");
-    if (!button) return;
+    if (!button || button.dataset.period === period) return;
+    const previous = analysisPart();
     period = button.dataset.period;
+    if (analysisPart() !== previous) {
+      stop();
+      scanStatus.classList.remove("negative");
+    }
     for (const tab of byId("holder-period").children) tab.setAttribute("aria-pressed", String(tab === button));
     renderList();
+    if (analysisPart() !== previous) analyze(false);
   });
   for (const [key, amount] of [["holder-prev", -1], ["holder-next", 1]]) {
     byId(key).addEventListener("click", () => {
       page += amount;
+      if (scan?.preview) stop();
       renderList();
       if (!scan) analyze(false);
     });
@@ -552,9 +582,10 @@
   byId("holder-market-icon").addEventListener("error", () => { byId("holder-market-icon").hidden = true; });
   cohort.addEventListener("change", load);
   scope.addEventListener("change", () => {
+    slices.similar = newSlices().similar;
+    if (analysisPart() !== "similar") return;
     stop();
     scanStatus.classList.remove("negative");
-    slices = [new Map(), new Map()];
     renderList();
     analyze(false);
   });

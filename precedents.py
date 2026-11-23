@@ -10,10 +10,11 @@ from threading import Lock
 from time import time
 from typing import NamedTuple
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urlsplit
-from urllib.request import Request, urlopen
+from urllib.parse import urlsplit
 
+from http_reads import GAMMA
 from market_discovery import SLUG, STOP
+from read_cache import ReadCache
 
 MINUTE = 60
 HOUR = 60 * MINUTE
@@ -23,6 +24,8 @@ EXTENDED_HORIZONS = (5 * MINUTE, 10 * MINUTE, 30 * MINUTE, HOUR, 2 * HOUR, 6 * H
                      DAY, 3 * DAY, 7 * DAY, 14 * DAY, 30 * DAY, 60 * DAY, 90 * DAY, 180 * DAY, 365 * DAY)
 MAX_CASES = 24
 MAX_MATCHES = 120
+COMPARISON_TTL = 1800
+COMPARABLE_SAMPLES = ReadCache(96)
 SWISS_QUERIES = ("Switzerland referendum", "Swiss referendum", "Swiss popular vote")
 CONDITION = re.compile(r"0x[0-9a-f]{64}")
 REFERENDUM = re.compile(r"\b(?:referend\w*|popular vote|ballot measure|ballot initiative|votation\w*)\b")
@@ -126,10 +129,7 @@ def array(value):
 
 @lru_cache(maxsize=192)
 def gamma_page(path, query, bucket):
-    req = Request("https://gamma-api.polymarket.com/" + path + "?" + urlencode(query),
-                  headers={"Accept": "application/json", "User-Agent": "PolymarketLocalDashboard/1.0"})
-    with urlopen(req, timeout=8) as response:
-        return json.load(response)
+    return GAMMA.read(path, query, 8)
 
 
 def gamma(path, **params):
@@ -587,8 +587,12 @@ def comparison_sample(entries, target, limit, broader_slots):
     return focused[:focused_count] + broader[:limit - focused_count]
 
 
-@lru_cache(maxsize=96)
 def comparable_sample(slug, scope, api, bucket):
+    return COMPARABLE_SAMPLES.read((slug, scope, api, bucket), lambda: build_sample(slug, scope, api),
+                                   ttl=COMPARISON_TTL)[0]
+
+
+def build_sample(slug, scope, api):
     target = target_market(slug)
     if not target:
         return None
@@ -715,7 +719,7 @@ def traded_conditions(wallet, pages, bucket):
 
 
 def compare_markets(slug, scope, wallet, api, pages, extended=True):
-    result = cached_study(slug, scope, api, int(time() // 1800), extended)
+    result = cached_study(slug, scope, api, int(time() // COMPARISON_TTL), extended)
     if not result:
         return None
     target = result["target"]

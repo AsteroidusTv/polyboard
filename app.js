@@ -643,7 +643,7 @@ function render(positions) {
   if (!byId("scenario-summary").hidden) syncScenario();
 }
 
-async function load() {
+async function load(fresh = false) {
   const address = DashboardSettings.wallet;
   if (!address) return DashboardSettings.open();
   positionRequest?.abort();
@@ -663,12 +663,15 @@ async function load() {
     findToggle.hidden = reviewToggle.hidden = scenarioToggle.hidden = count.hidden = totals.hidden = results.hidden = empty.hidden = true;
   }
   status.textContent = "Loading positions…";
-  DashboardWidgets.portfolio(byId("portfolio-chart"), address);
+  const query = new URLSearchParams({wallet: address});
+  if (fresh) query.set("fresh", "1");
   try {
-    const response = await fetch("/api/positions?" + new URLSearchParams({wallet: address}), {
+    const read = fetch("/api/positions?" + query, {
       cache: "no-store",
       signal: AbortSignal.any([request.signal, AbortSignal.timeout(30000)])
     });
+    DashboardWidgets.portfolio(byId("portfolio-chart"), address, fresh);
+    const response = await read;
     const data = await response.json();
     if (request !== positionRequest) return;
     if (!response.ok) throw new Error(data.error || "Could not load positions.");
@@ -697,7 +700,7 @@ async function load() {
   }
 }
 
-refresh.addEventListener("click", load);
+refresh.addEventListener("click", () => load(true));
 for (const button of sortButtons) {
   button.addEventListener("click", () => changePositionSort(button.dataset.sortKey));
 }

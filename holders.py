@@ -8,8 +8,9 @@ from statistics import median
 from threading import Lock
 from time import monotonic, sleep, time
 
-from precedents import (SLUG, UPSTREAM, array, comparable_sample, epoch, recent_market,
+from precedents import (COMPARISON_TTL, SLUG, UPSTREAM, array, comparable_sample, epoch, recent_market,
                         resolved_winner, thumbnail)
+from read_cache import ReadCache
 from server import CONDITION, TOKEN, WALLET, data_page, data_request
 
 COHORTS = {"25": 25, "50": 50, "100": 100, "1000": 1000, "all": 12000}
@@ -23,12 +24,19 @@ HOUR = 3600
 SNAPSHOT_SECONDS = HOUR
 SNAPSHOTS = OrderedDict()
 SNAPSHOT_LOCK = Lock()
+ROSTERS = ReadCache(48)
+WALLET_HISTORY = ReadCache(1024)
+HOLDER_BATCHES = ReadCache(192)
 RESOLUTIONS = OrderedDict()
 RESOLUTION_LOCK = Lock()
 HISTORY_POOL = ThreadPoolExecutor(max_workers=12)
 READ_POOL = ThreadPoolExecutor(max_workers=10)
 POSITIONS_LOCK = Lock()
 NEXT_POSITION_READ = 0.0
+POSITION_INTERVAL = .125
+POSITION_BURST = 4
+POSITION_FIELDS = ("condition_id", "token_id", "last_event_at", "first_entry_at", "outcome_index",
+                   "outcome", "realized_pnl", "total_pnl", "title", "icon", "image")
 
 
 class ExpiredSnapshot(ValueError):
@@ -119,21 +127,23 @@ def holder_rows(market, limit, fetch=data_page):
 
 
 def roster(market, cohort, now):
-    key = market["slug"], cohort
+    def load():
+        sides, complete, partial = holder_rows(market, COHORTS[cohort])
+        data = {"snapshot": token_urlsafe(18), "as_of": now, "market": market, "cohort": cohort, "sides": sides,
+                "complete": complete, "partial": partial, "cap": COHORTS[cohort]}
+        with SNAPSHOT_LOCK:
+            SNAPSHOTS[data["snapshot"]] = data
+            while len(SNAPSHOTS) > 48:
+                SNAPSHOTS.popitem(last=False)
+        return data
+
+    data, _ = ROSTERS.read((market["slug"], cohort), load, ttl=120, cache_if=lambda data: not data["partial"])
+    # A busy instance can evict a roster while the shorter response cache still holds it.
     with SNAPSHOT_LOCK:
-        for token in list(SNAPSHOTS):
-            if now - SNAPSHOTS[token]["as_of"] >= SNAPSHOT_SECONDS:
-                del SNAPSHOTS[token]
-        for data in reversed(SNAPSHOTS.values()):
-            if (data["market"]["slug"], data["cohort"]) == key and now - data["as_of"] < 120:
-                return data
-    sides, complete, partial = holder_rows(market, COHORTS[cohort])
-    data = {"snapshot": token_urlsafe(18), "as_of": now, "market": market, "cohort": cohort, "sides": sides,
-            "complete": complete, "partial": partial, "cap": COHORTS[cohort]}
-    with SNAPSHOT_LOCK:
-        SNAPSHOTS[data["snapshot"]] = data
-        while len(SNAPSHOTS) > 48:
-            SNAPSHOTS.popitem(last=False)
+        registered = data["snapshot"] in SNAPSHOTS
+    if not registered:
+        data, _ = ROSTERS.read((market["slug"], cohort), load, ttl=120, refresh=True,
+                               cache_if=lambda data: not data["partial"])
     return data
 
 
@@ -154,14 +164,16 @@ def lifecycle_page(wallet, status, conditions=()):
     if status != "CLOSED":
         params.update(include_archived="true", filter_amount=0)
     try:
-        # The app and review worker share the upstream rate limit.
+        # Both processes can use short bursts and sustain eight position reads per second each.
         with POSITIONS_LOCK:
             now = monotonic()
             next_read = max(now, NEXT_POSITION_READ)
-            NEXT_POSITION_READ = next_read + .125
-        sleep(next_read - now)
+            NEXT_POSITION_READ = next_read + POSITION_INTERVAL
+        delay = next_read - now - POSITION_INTERVAL * (POSITION_BURST - 1)
+        if delay > 0:
+            sleep(delay)
         rows, cursor = data_page("positions", params, timeout=5)
-        return rows, cursor is None
+        return [{key: row[key] for key in POSITION_FIELDS if key in row} for row in rows], cursor is None
     except UPSTREAM:
         return [], None
 
@@ -176,19 +188,20 @@ def stats(wallet):
         return {}
 
 
-@lru_cache(maxsize=8192)
-def wallet_history(wallet, bucket):
-    jobs = [(status, READ_POOL.submit(lifecycle_page, wallet, status)) for status in FINAL_STATUSES]
-    stats_job = READ_POOL.submit(stats, wallet)
-    rows, coverage = [], []
-    for status, job in jobs:
-        data, complete = job.result()
-        rows.extend((status, row) for row in data)
-        coverage.append(complete)
-    return rows, coverage, stats_job.result()
+def wallet_history(wallet):
+    def load():
+        jobs = [(status, READ_POOL.submit(lifecycle_page, wallet, status)) for status in FINAL_STATUSES]
+        rows, coverage = [], []
+        for status, job in jobs:
+            data, complete = job.result()
+            rows.extend((status, row) for row in data)
+            coverage.append(complete)
+        return rows, coverage
+
+    return WALLET_HISTORY.read(wallet, load, ttl=300, cache_if=lambda result: None not in result[1])[0]
 
 
-@lru_cache(maxsize=4096)
+@lru_cache(maxsize=1024)
 def comparable_positions(wallet, conditions, bucket):
     batches = [conditions[start:start + 20] for start in range(0, len(conditions), 20)]
     jobs = [(status, READ_POOL.submit(lifecycle_page, wallet, status, batch))
@@ -343,9 +356,9 @@ def verified_winners(conditions):
     return cached
 
 
-def comparable_markets(market, scope, bucket):
+def comparable_markets(market, scope):
     try:
-        report = comparable_sample(market["slug"], scope, data_request, bucket)
+        report = comparable_sample(market["slug"], scope, data_request, int(time() // COMPARISON_TTL))
         if not report or report.get("status") == "target_unverified":
             return None
         return {case["condition"]: {"resolved_at": case["resolved_at"], "image": thumbnail(case) or case.get("event_image"),
@@ -355,25 +368,25 @@ def comparable_markets(market, scope, bucket):
         return None
 
 
-def profile(wallet, market, comparables, bucket):
+def profile(wallet, market, comparables, bucket, include_history):
     if market["closed"] and not market["resolved_at"] and not market["closed_at"]:
         return {"wallet": wallet, "recent": economic_record([]), "history": economic_record([]),
                 "history_complete": False, "history_available": False, "similar": None, "similar_complete": False,
                 "recent_positions": [], "direction_positions": [], "comparable_positions": []}
-    history, coverage, historical = wallet_history(wallet, bucket)
+    history, coverage = wallet_history(wallet)
     # For historical markets use only rows whose latest position activity predates settlement.
     dates = [stamp for stamp in (market["resolved_at"], market["closed_at"]) if stamp]
     cutoff = min(dates) if market["closed"] else None
     earlier_settlements = None
-    if cutoff is not None:
+    if include_history and cutoff is not None:
         pending = [row for status, row in history if status != "CLOSED" and
                    (stamp := epoch(row.get("last_event_at"))) and stamp < cutoff]
         pending.sort(key=lambda row: epoch(row["last_event_at"]), reverse=True)
         conditions = {value for row in pending[:DIRECTION_LIMIT]
                       if isinstance(value := row.get("condition_id"), str) and CONDITION.fullmatch(value)}
         earlier_settlements = verified_winners(conditions)
-    markets = positions_by_market(history, cutoff, earlier_settlements)
-    markets = [row for row in markets if row["condition"] != market["condition"]]
+    markets = ([row for row in positions_by_market(history, cutoff, earlier_settlements)
+                if row["condition"] != market["condition"]] if include_history else [])
     similar_markets, similar_complete = [], comparables is not None
     if comparables:
         if all(mark is True for mark in coverage):
@@ -384,35 +397,52 @@ def profile(wallet, market, comparables, bucket):
         similar_markets = positions_by_market(relevant, cutoff, comparables)
     return {"wallet": wallet, "recent": economic_record(markets[:RECENT_LIMIT]), "history": economic_record(markets),
             "history_complete": cutoff is None and all(mark is True for mark in coverage),
-            "history_available": any(mark is not None for mark in coverage), "comparable_positions": similar_markets,
+            "history_available": any(mark is not None for mark in coverage), "history_partial": None in coverage,
+            "comparable_positions": similar_markets,
             "similar_complete": similar_complete,
             "direction_positions": markets[:DIRECTION_LIMIT],
             "recent_positions": [{key: value for key, value in row.items() if key != "positions"}
-                                 for row in markets[:8]],
-            **(historical if not market["closed"] else {})}
+                                 for row in markets[:8]]}
 
 
-def performance(market, side_rows, scope):
+def performance(market, side_rows, scope, part="full", include_stats=False):
     bucket = int(time()) // 300
-    comparables = comparable_markets(market, scope, bucket)
-    jobs = [HISTORY_POOL.submit(profile, row["wallet"], market, comparables, bucket) for row in side_rows]
+    comparables = comparable_markets(market, scope) if part != "history" else None
+    if part == "similar" and not comparables:
+        return {"profiles": [{"wallet": row["wallet"], "similar": comparable_record([], {}) if comparables is not None else None,
+                              "similar_complete": comparables is not None} for row in side_rows],
+                "similar_markets": 0 if comparables is not None else None}
+    jobs = [HISTORY_POOL.submit(profile, row["wallet"], market, comparables, bucket, part != "similar")
+            for row in side_rows]
     profiles = [job.result() for job in jobs]
     winners = verified_winners({case["condition"] for row in profiles for case in row["direction_positions"]})
     if market["closed"]:
         cutoff = min((stamp for stamp in (market["closed_at"], market["resolved_at"]) if stamp), default=0)
         winners = {key: value for key, value in winners.items() if value["resolved_at"] < cutoff}
+
     def directions(row):
         cases = row.pop("direction_positions")
         related = row.pop("comparable_positions")
         conditions = ({case["condition"] for case in cases if case["condition"] in winners} |
                       {case["condition"] for case in related})
         evidence = observed_buys(row["wallet"], tuple(sorted(conditions)), bucket) if conditions else {}
-        row["direction"] = comparable_record(cases, winners, evidence)
-        row["recent_direction"] = comparable_record(cases[:RECENT_LIMIT], winners, evidence)
-        row["similar"] = comparable_record(related, comparables, evidence) if comparables is not None else None
-        row["direction_checked"] = len(cases)
-    list(HISTORY_POOL.map(directions, profiles))
-    return {"profiles": profiles, "similar_markets": len(comparables) if comparables is not None else None}
+        if part != "similar":
+            row["direction"] = comparable_record(cases, winners, evidence)
+            row["recent_direction"] = comparable_record(cases[:RECENT_LIMIT], winners, evidence)
+            row["direction_checked"] = len(cases)
+        if part != "history":
+            row["similar"] = comparable_record(related, comparables, evidence) if comparables is not None else None
+        if include_stats and not market["closed"]:
+            row.update(stats(row["wallet"]))
+        if part == "similar":
+            return {key: row[key] for key in ("wallet", "similar", "similar_complete")}
+        if part == "history":
+            row["direction"].pop("rows")
+            row["recent_direction"].pop("rows")
+        return row
+
+    return {"profiles": list(HISTORY_POOL.map(directions, profiles)),
+            "similar_markets": len(comparables) if comparables is not None else None}
 
 
 def recent_fills(wallet, market):
@@ -531,29 +561,46 @@ def serve(handler, query):
     slug, view = first("market"), first("view", "list")
     scope, cohort = first("scope", "focused"), first("limit", "50")
     side, offset = first("side", "0"), first("offset", "0")
+    part, take = first("part", "full"), first("take", str(BATCH_SIZE))
+    if (part not in ("full", "history", "similar") or len(take) > 2 or not take.isascii()
+            or not take.isdecimal() or not 1 <= int(take) <= BATCH_SIZE):
+        handler.send_json(400, {"error": "Choose a valid holder analysis batch."})
+        return
     if (not SLUG.fullmatch(slug) or view not in ("list", "signals", "performance", "wallet")
             or scope not in ("focused", "broad") or cohort not in COHORTS or side not in ("0", "1")
             or not offset.isascii() or not offset.isdecimal() or len(offset) > 5):
         handler.send_json(400, {"error": "Choose a market and a valid holder sample."})
         return
     try:
+        headers = None
         if view in ("performance", "wallet"):
             data = get_snapshot(slug, first("snapshot"))
             rows = data["sides"][int(side)]["rows"]
             start = int(offset)
             if view == "performance":
-                sample = rows[start:start + BATCH_SIZE]
+                end = start + int(take)
+                sample = rows[start:end]
                 if start and not sample:
                     handler.send_json(404, {"error": "This page is outside the selected sample."})
                     return
-                results = performance(data["market"], sample, scope) if sample else {"profiles": [], "similar_markets": None}
-                payload = {**results, "offset": start, "next_offset": start + BATCH_SIZE
-                           if start + BATCH_SIZE < len(rows) else None}
+                def ready(result):
+                    return ((part == "history" or result["similar_markets"] is not None) and
+                            all(not row.get("history_partial") and row.get("history_available", True)
+                                for row in result["profiles"]))
+
+                key = (data["snapshot"], side, start, end, part, scope if part != "history" else "")
+                results, cache = HOLDER_BATCHES.read(key, lambda: performance(data["market"], sample, scope, part,
+                                                                             include_stats=part == "full"),
+                                                     ttl=120, cache_if=ready)
+                payload = {**results, "offset": start, "next_offset": end if end < len(rows) else None}
+                headers = {"X-Polyboard-Cache": cache}
             elif start >= len(rows):
                 handler.send_json(404, {"error": "This wallet is outside the selected sample."})
                 return
             else:
-                payload = {"fills": recent_fills(rows[start]["wallet"], data["market"])}
+                wallet = rows[start]["wallet"]
+                summary = READ_POOL.submit(stats, wallet) if not data["market"]["closed"] else None
+                payload = {"fills": recent_fills(wallet, data["market"]), "stats": summary.result() if summary else {}}
         else:
             market = market_details(slug)
             if not market:
@@ -566,4 +613,4 @@ def serve(handler, query):
     except UPSTREAM:
         handler.send_json(502, {"error": "Polymarket data couldn’t load. Try again shortly."})
         return
-    handler.send_json(200, payload)
+    handler.send_json(200, payload, headers)

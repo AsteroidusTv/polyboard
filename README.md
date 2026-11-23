@@ -113,3 +113,5 @@ curl -fsS 'http://127.0.0.1:8765/api/positions?wallet=PUBLIC_WALLET_ADDRESS' | p
 Replace `PUBLIC_WALLET_ADDRESS` with the public wallet you want to check.
 
 Run the regression checks with `python3 -m unittest discover -s tests`.
+
+Run `python3 scripts/benchmark.py --url http://127.0.0.1:8765` to check response times and data coverage. Pass `--wallet PUBLIC_WALLET_ADDRESS` to include the portfolio and trade history, or `--market MARKET_SLUG` and `--precedent-market MARKET_SLUG` to reuse the same market data across runs. The report gives the first response time and the median of subsequent requests. A first response can already be cached on a running service. Use a fresh test instance when comparing cold loads.

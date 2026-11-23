@@ -325,14 +325,15 @@ const DashboardWidgets = (() => {
     return response.json();
   }
 
-  async function loadPortfolioChart(panel, wallet, signal, {cutoff = Infinity, note, activity, retry} = {}) {
+  async function loadPortfolioChart(panel, wallet, signal, {cutoff = Infinity, note, activity, retry, fresh} = {}) {
     if (cutoff === null) {
       panel.show("A market close time is needed for historical wallet P&L.");
       return;
     }
     panel.show("Loading portfolio history…");
     try {
-      const data = await json("/api/portfolio-history", {wallet}, signal);
+      const params = fresh ? {wallet, fresh: "1"} : {wallet};
+      const data = await json("/api/portfolio-history", params, signal);
       if (signal.aborted) return;
       const points = data.points.filter(([time]) => time < cutoff);
       if (!points.length) return panel.show(Number.isFinite(cutoff)
@@ -346,7 +347,7 @@ const DashboardWidgets = (() => {
     }
   }
 
-  async function portfolio(root, wallet) {
+  async function portfolio(root, wallet, fresh = false) {
     portfolioRequest?.abort();
     const request = new AbortController();
     portfolioRequest = request;
@@ -355,8 +356,9 @@ const DashboardWidgets = (() => {
     let positions;
     return loadPortfolioChart(portfolioPanel, wallet, request.signal, {
       retry: "Use Refresh to try again.",
+      fresh,
       activity: {
-        loadTrades: () => portfolioTimeline(wallet, request.signal),
+        loadTrades: () => portfolioTimeline(wallet, request.signal, fresh),
         openTrade(marker) {
           positions ||= json("/api/trade-summary", {wallet}, request.signal)
             .then(({positions}) => new Map(positions.map((position) => [String(position.token_id), position])))
@@ -378,10 +380,10 @@ const DashboardWidgets = (() => {
     return loadPortfolioChart(walletCharts.get(root), wallet, signal, {cutoff, note, retry: "Reopen this profile to try again."});
   }
 
-  async function portfolioTimeline(wallet, signal) {
+  async function portfolioTimeline(wallet, signal, fresh) {
     const [fills, events] = await Promise.allSettled([
-      portfolioTradeMarkers(wallet, signal),
-      json("/api/portfolio-events", {wallet}, signal)
+      portfolioTradeMarkers(wallet, signal, fresh),
+      json("/api/portfolio-events", fresh ? {wallet, fresh: "1"} : {wallet}, signal)
     ]);
     if (fills.status === "rejected" && events.status === "rejected") throw fills.reason;
     const markers = fills.value || [];
@@ -410,12 +412,15 @@ const DashboardWidgets = (() => {
     return {markers: markers.sort((a, b) => a.time - b.time), warning};
   }
 
-  async function portfolioTradeMarkers(wallet, signal) {
+  async function portfolioTradeMarkers(wallet, signal, fresh) {
     const markers = [];
     const seen = new Set();
     let cursor = null;
     do {
-      const {trades, next_cursor: next} = await json("/api/trades", cursor ? {wallet, cursor} : {wallet}, signal);
+      const params = {wallet};
+      if (cursor) params.cursor = cursor;
+      if (fresh) params.fresh = "1";
+      const {trades, next_cursor: next} = await json("/api/trades", params, signal);
       if (!Array.isArray(trades) || !trades.every((trade) => trade && typeof trade === "object")) {
         throw new Error("Invalid trade page");
       }

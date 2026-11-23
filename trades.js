@@ -315,6 +315,7 @@ async function loadTrades(force = false) {
       do {
         const params = new URLSearchParams({wallet: address});
         if (cursor) params.set("cursor", cursor);
+        if (force) params.set("fresh", "1");
         const response = await fetch("/api/trades?" + params, {
           signal: AbortSignal.any([request.signal, AbortSignal.timeout(15000)])
         });
