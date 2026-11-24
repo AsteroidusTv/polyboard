@@ -60,6 +60,7 @@
 .holder-rate small { display: block; font-size: .74rem; margin-top: 2px; }
 .holder-score { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .holder-metrics .holder-score { white-space: normal; }
+.holder-score-percent { display: inline-block; font-size: .8em; font-weight: 600; white-space: nowrap; }
 .holder-pages > span { font-size: .82rem; text-align: center; }
 #holder-signal { margin-top: 10px; }
 .holder-signal-flag { color: #ffd0a6; }

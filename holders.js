@@ -27,6 +27,7 @@
   const compact = new Intl.NumberFormat("en-US", {style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 1});
   const money = new Intl.NumberFormat("en-US", {style: "currency", currency: "USD", signDisplay: "exceptZero"});
   const chance = new Intl.NumberFormat("en-US", {maximumFractionDigits: 2});
+  const scorePercent = new Intl.NumberFormat("en-US", {style: "percent", maximumFractionDigits: 1});
   const date = new Intl.DateTimeFormat("en-US", {dateStyle: "medium", timeStyle: "short"});
   const day = new Intl.DateTimeFormat("en-US", {dateStyle: "medium"});
   const PAGE_SIZE = 12;
@@ -154,7 +155,7 @@
     return amount >= .005 ? "positive" : amount <= -.005 ? "negative" : "muted";
   }
 
-  function rateValue(result, left, right) {
+  function rateValue(result, left, right, {showPercent = false} = {}) {
     const good = result?.[left], bad = result?.[right];
     const total = good + bad;
     const value = node("strong", undefined, "holder-score");
@@ -164,6 +165,7 @@
     }
     const tone = total >= 5 && good !== bad ? (good > bad ? "positive" : "negative") : "";
     value.append(node("span", count.format(good), tone), node("span", " / " + count.format(total), "muted"));
+    if (showPercent) value.append(" ", node("span", "(" + scorePercent.format(good / total) + ")", "holder-score-percent muted"));
     return value;
   }
 
@@ -217,7 +219,7 @@
       badge("Holders in sample", count.format(shown), shown ? shares.format(group.shares) + " net shares" : ""),
       badge("Top 5 concentration", group.top_five_pct == null ? "—" : group.top_five_pct + "%", "Of sampled shares"),
       badge(period === "similar" ? "Correct comparable picks" : "Profitable markets",
-        period === "similar" ? rateValue(record, "right", "wrong") : rateValue(record, "profit", "loss"),
+        period === "similar" ? rateValue(record, "right", "wrong") : rateValue(record, "profit", "loss", {showPercent: true}),
         record.wallets ? count.format(record.wallets) + " wallets with records" : profiles.size ? "No graded records yet" : "Wallet coverage pending")
     );
     const checked = profiles.size;
