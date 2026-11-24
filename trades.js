@@ -52,7 +52,7 @@ const views = {
     ]
   }
 };
-let view = "positions";
+let view = DashboardWidgets.positionQuery().get("view") || "positions";
 let records = [];
 let loadedWallet = "";
 const historyCache = new Map();
@@ -120,15 +120,17 @@ function displayDate(timestamp, withTime = false) {
   return time;
 }
 
+function openExecution(trade) {
+  const fill = {...trade, type: "TRADE", usdc_size: trade.gross};
+  const summary = historyCache.get("positions")?.rows.find((position) => position.token_id === trade.token_id);
+  DashboardWidgets.openPosition({...trade, executions: [fill]}, DashboardSettings.wallet, {fill, summary});
+}
+
 function tradeRow(trade) {
   const row = element("tr");
   const action = trade.side === "BUY" ? "Buy" : trade.side === "SELL" ? "Sell" : "—";
   const actionClass = trade.side === "BUY" ? " yes" : trade.side === "SELL" ? " no" : "";
-  const fill = {...trade, type: "TRADE", usdc_size: trade.gross};
-  const title = /^\d{1,78}$/.test(trade.token_id || "") ? DashboardWidgets.marketTitle(trade, () => {
-    const summary = historyCache.get("positions")?.rows.find((position) => position.token_id === trade.token_id);
-    DashboardWidgets.openPosition({...trade, executions: [fill]}, DashboardSettings.wallet, {fill, summary});
-  }) : undefined;
+  const title = /^\d{1,78}$/.test(trade.token_id || "") ? DashboardWidgets.marketTitle(trade, () => openExecution(trade)) : undefined;
   row.append(marketCell(trade, title), cell("Side", element("span", "side" + actionClass, action)),
     cell("Price", displayPrice(trade.price)), cell("Shares", displayShares(trade.size)),
     cell("Gross amount", formatMoney(trade.gross)), cell("Date", displayDate(trade.timestamp, true)));
@@ -292,6 +294,7 @@ async function loadTrades(force = false) {
     results.hidden = false;
     updateOverview(fees);
     renderTrades(keepRows);
+    DashboardWidgets.restorePosition(records, group ? DashboardWidgets.openPosition : openExecution);
     rendered = true;
   }
   try {
@@ -387,6 +390,11 @@ function showView(nextView) {
   currentRequest?.abort();
   currentRequest = undefined;
   view = nextView;
+  const url = new URL(location.href);
+  if (view === "executions") url.searchParams.set("view", view);
+  else url.searchParams.delete("view");
+  url.searchParams.delete("position");
+  history.replaceState(history.state, "", url);
   configureView();
   results.hidden = true;
   loading.hidden = true;

@@ -10,15 +10,16 @@
     const prev = new URLSearchParams({market: params.get("from") || slug, scope: params.get("scope") || "focused"});
     if (catalog !== null) prev.set("catalog", catalog);
     if (params.has("return_source")) prev.set("source", params.get("return_source"));
+    for (const [key, value] of DashboardWidgets.positionQuery(params)) prev.set(key, value);
     back.href = "/precedents?" + prev;
     back.textContent = "← Market precedents";
   } else if (catalog?.startsWith("?") || /^#watchlist(?:\/market\/[a-z0-9-]+)?$/.test(catalog || "")) {
     back.href = "/markets" + catalog;
   } else if (params.get("source") === "trades") {
-    back.href = "/trades";
+    back.href = DashboardWidgets.positionBack("/trades", params);
     back.textContent = "← Trade history";
   } else if (params.get("source") === "portfolio") {
-    back.href = "/";
+    back.href = DashboardWidgets.positionBack("/", params);
     back.textContent = "← Portfolio";
   }
 
@@ -220,7 +221,8 @@
       badge("Top 5 concentration", group.top_five_pct == null ? "—" : group.top_five_pct + "%", "Of sampled shares"),
       badge(period === "similar" ? "Correct comparable picks" : "Profitable markets",
         period === "similar" ? rateValue(record, "right", "wrong") : rateValue(record, "profit", "loss", {showPercent: true}),
-        record.wallets ? count.format(record.wallets) + " wallets with records" : profiles.size ? "No graded records yet" : "Wallet coverage pending")
+        record.wallets ? "Across " + count.format(record.wallets) + (record.wallets === 1 ? " holder" : " holders")
+          : profiles.size ? "No graded records yet" : "Wallet coverage pending")
     );
     const checked = profiles.size;
     const notes = [];

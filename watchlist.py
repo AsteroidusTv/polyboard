@@ -14,7 +14,7 @@ from pathlib import Path
 from threading import Thread
 from time import sleep, time
 from urllib.error import URLError
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 from urllib.request import Request, urlopen
 
 from precedents import SLUG, array, epoch, gamma_by_slug, recent_market, thumbnail
@@ -99,6 +99,17 @@ def quote_batch(tokens):
         return midpoint_prices(tokens)
     except (URLError, TimeoutError, ValueError, AttributeError, TypeError):
         return {}
+
+
+def watch_preview(slug):
+    if not isinstance(slug, str) or not SLUG.fullmatch(slug):
+        raise RequestError("Invalid market.")
+    market = market_details(slug)
+    prices = quote_batch([side["token_id"] for side in market["outcomes"]])
+    now = int(time())
+    quotes = {token: {"current": price, "baseline": price, "time": now, "points": [[now, float(price)]]}
+              for token, price in prices.items()}
+    return market, quotes
 
 
 def crossed(previous, price, target, direction):
@@ -221,24 +232,30 @@ class Watchlist:
         slug = data.get("slug")
         if action in ("follow", "unfollow", "add-alert") and (not isinstance(slug, str) or not SLUG.fullmatch(slug)):
             raise RequestError("Invalid market.")
+        new_alert = data.get("alert") if action == "follow" else None
+        if new_alert is not None and not isinstance(new_alert, dict):
+            raise RequestError("Invalid price alert.")
         market = quotes = None
         if action == "follow":
             with self.connect() as db:
-                if db.execute("SELECT 1 FROM watches WHERE session = ? AND slug = ?", (session, slug)).fetchone():
+                watched = db.execute("SELECT 1 FROM watches WHERE session = ? AND slug = ?", (session, slug)).fetchone()
+                if watched and new_alert is None:
                     return self.snapshot(db, session)
-                self.check_capacity(db, session)
-            market = market_details(slug)
-            prices = quote_batch([side["token_id"] for side in market["outcomes"]])
-            now = int(time())
-            quotes = {token: {"current": price, "baseline": price, "time": now, "points": [[now, float(price)]]}
-                      for token, price in prices.items()}
+                if not watched:
+                    self.check_capacity(db, session)
+            if not watched:
+                market, quotes = watch_preview(slug)
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             if action == "follow":
                 if not db.execute("SELECT 1 FROM watches WHERE session = ? AND slug = ?", (session, slug)).fetchone():
+                    if market is None:
+                        raise WatchError("This market was unfollowed. Try again to follow it.")
                     self.check_capacity(db, session)
                     db.execute("INSERT INTO watches VALUES (?, ?, ?, ?, ?)",
                                (session, slug, json.dumps(market), json.dumps(quotes), int(time())))
+                if new_alert is not None:
+                    self.add_alert(db, session, slug, new_alert)
             elif action == "unfollow":
                 db.execute("DELETE FROM watches WHERE session = ? AND slug = ?", (session, slug))
             elif action == "add-alert":
@@ -453,7 +470,12 @@ def serve(handler, store, write=False):
     session = session_cookie(handler)
     try:
         if not write:
-            handler.send_json(200, store.read(session))
+            market = parse_qs(urlsplit(handler.path).query, keep_blank_values=True).get("market")
+            if market is None:
+                handler.send_json(200, store.read(session))
+            else:
+                details, quotes = watch_preview(market[0])
+                handler.send_json(200, {**details, "quotes": quotes})
             return
         if handler.headers.get("Sec-Fetch-Site") not in (None, "same-origin", "none") or (
                 handler.headers.get_content_type() != "application/json"):

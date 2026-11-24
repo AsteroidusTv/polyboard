@@ -6,6 +6,7 @@ from time import time
 from unittest.mock import patch
 from urllib.error import URLError
 
+import market_catalog
 import precedents
 import review_server
 import server
@@ -95,6 +96,22 @@ class PortfolioTests(unittest.TestCase):
 
 
 class WatchlistTests(unittest.TestCase):
+    def test_follow_with_alert_only_saves_when_alert_is_valid(self):
+        market = {"slug": "market", "title": "Market", "state": "open", "outcomes": [{"token_id": "1", "label": "Yes"}]}
+        alert = {"token": "1", "direction": "above", "kind": "change", "value": "150"}
+        with TemporaryDirectory() as folder, patch.object(watchlist, "market_details", return_value=market):
+            store = watchlist.Watchlist(Path(folder))
+            with patch.object(watchlist, "quote_batch", return_value={"1": "0.40"}):
+                watchlist.watch_preview("market")
+                self.assertEqual(store.read("browser")["watches"], [])
+                with self.assertRaises(watchlist.RequestError):
+                    store.mutate("browser", {"action": "follow", "slug": "market", "alert": alert})
+                self.assertEqual(store.read("browser")["watches"], [])
+                result = store.mutate("browser", {"action": "follow", "slug": "market", "alert": {**alert, "value": "25"}})
+            saved = result["watches"]
+            self.assertEqual(len(saved), 1)
+            self.assertEqual([(row["baseline"], row["target"]) for row in saved[0]["alerts"]], [("0.40", "0.5")])
+
     def test_stale_quote_and_market_closure_keep_follow_without_firing(self):
         market = {"slug": "market", "title": "Market", "state": "open", "outcomes": [
             {"token_id": "1", "label": "Yes"}, {"token_id": "2", "label": "No"}
@@ -126,6 +143,27 @@ class WatchlistTests(unittest.TestCase):
                 store.check_prices()
                 store.check_prices()
             self.assertEqual(len(store.read("browser")["notices"]), 1)
+
+
+class MarketCatalogTests(unittest.TestCase):
+    def test_search_preview_keeps_matching_submarket_and_drops_unrelated_results(self):
+        def candidate(slug, title, price):
+            return {"slug": slug, "question": title, "active": True, "acceptingOrders": True,
+                    "outcomes": ["Yes", "No"], "clobTokenIds": ["1", "2"], "outcomePrices": [price, 1 - price]}
+
+        event = {"slug": "election", "title": "Presidential election", "markets": [
+            candidate("candidate-alvarez", "Will Candidate Álvarez win?", 0.01),
+            candidate("candidate-brown", "Will Candidate Brown win?", 0.70),
+        ]}
+        with patch.object(market_catalog, "search_event_page", return_value=([event], False)):
+            def search(query):
+                return market_catalog.browse_markets({"q": [query], "preview": ["1"]})["events"]
+
+            matches = search("Candidate Alvarez")
+            self.assertEqual([market["slug"] for market in matches[0]["markets"]], ["candidate-alvarez"])
+            self.assertEqual(matches[0]["matching_market_count"], 1)
+            self.assertEqual(search("unrelated-candidate"), [])
+            self.assertEqual(search("Presidential election")[0]["matching_market_count"], 2)
 
 
 class ReviewTests(unittest.TestCase):

@@ -7,7 +7,7 @@ from time import time
 
 from precedents import (
     CONDITION, REFERENDUM, SLUG, SWISS_QUERIES, array, clean, epoch, gamma_by_slug, gamma_page,
-    polymarket_link, search_event_page, swiss_referendum_search, terms, thumbnail,
+    polymarket_link, search_event_page, swiss_referendum_search, thumbnail,
 )
 
 
@@ -24,6 +24,7 @@ PAGE_SIZE = 18
 PAGES_PER_REQUEST = 3
 PREVIEW_MARKETS = 4
 TOKEN = re.compile(r"[0-9]{1,78}")
+SEARCH_STOP = set("a an and at by does for from in is of on or the to what when which who will with".split())
 
 
 class CatalogError(ValueError):
@@ -129,6 +130,11 @@ def in_band(market, side, band):
     return price is not None and (band / 10 <= price < (band + 1) / 10 or (band == 9 and price == 1))
 
 
+def search_terms(text):
+    words = set(re.findall(r"[a-z]+|\d+", clean(text)))
+    return words - SEARCH_STOP or words
+
+
 def event_card(event, category, excluded, side, band, after, before, liquidity, spread, sought):
     slug = event.get("slug") or ""
     tags = {tag.get("slug") for tag in event.get("tags") or []}
@@ -137,6 +143,8 @@ def event_card(event, category, excluded, side, band, after, before, liquidity, 
             (category in CATEGORIES and category not in tags)):
         return None
     markets = []
+    title = event.get("title") or ""
+    required = sought - search_terms(title) if sought else sought
     open_count = 0
     for raw in event.get("markets") or []:
         market = open_market(raw, event)
@@ -144,17 +152,20 @@ def event_card(event, category, excluded, side, band, after, before, liquidity, 
             continue
         open_count += 1
         end = market["end_at"]
-        if (band is not None and not in_band(market, side, band) or
+        if (required and not required <= search_terms(market["title"] + " " + market["label"]) or
+                band is not None and not in_band(market, side, band) or
                 after and (end is None or end < after) or before and (end is None or end >= before) or
                 market["liquidity"] < liquidity or spread and (market["spread"] is None or market["spread"] > spread)):
             continue
         markets.append(market)
     if not markets:
         return None
-    markets.sort(key=lambda row: (len(sought.intersection(terms(row["title"] + " " + row["label"]))),
-                                  row["volume_24h"], row["liquidity"]), reverse=True)
-    title = event.get("title") or markets[0]["title"]
-    return {"slug": slug, "title": title, "image": thumbnail(event, (event.get("markets") or [{}])[0]),
+    def rank(market):
+        matches = len(sought & search_terms(market["title"] + " " + market["label"])) if sought else 0
+        return matches, market["volume_24h"], market["liquidity"]
+
+    markets.sort(key=rank, reverse=True)
+    return {"slug": slug, "title": title or markets[0]["title"], "image": thumbnail(event, (event.get("markets") or [{}])[0]),
             "categories": [tag for tag in CATEGORIES if tag in tags], "markets": markets, "market_count": open_count,
             "end_at": min((row["end_at"] for row in markets if row["end_at"]), default=None),
             "volume_24h": number(event.get("volume24hr")) or sum(row["volume_24h"] for row in markets),
@@ -162,9 +173,9 @@ def event_card(event, category, excluded, side, band, after, before, liquidity, 
             "created_at": epoch(event.get("createdAt")) or 0}
 
 
-def preview_card(card):
+def preview_card(card, *, search):
     markets = card["markets"]
-    if all({clean(outcome["label"]) for outcome in market["outcomes"]} == {"yes", "no"} for market in markets):
+    if not search and all({clean(outcome["label"]) for outcome in market["outcomes"]} == {"yes", "no"} for market in markets):
         markets = sorted(markets, key=lambda market: market["outcomes"][0]["price"]
                          if market["outcomes"][0]["price"] is not None else -1, reverse=True)
     return {**card, "matching_market_count": len(markets), "markets": markets[:PREVIEW_MARKETS]}
@@ -174,7 +185,10 @@ def browse_markets(query):
     q, category, excluded, sort, side, band, after, before, liquidity, spread, cursor = parse_filters(query)
     event_slug = query.get("event", [""])[0]
     parts = polymarket_link(q) if q else None
-    sought = set(terms(q)) if q and parts is None else set()
+    swiss = bool(parts is None and q and swiss_referendum_search(clean(q)))
+    sought = search_terms(q) if q and parts is None and not swiss else set()
+    if q and parts is None and not swiss and not sought:
+        return {"events": [], "next_cursor": None}
     if category in excluded:
         return {"events": [], "next_cursor": None}
     if event_slug:
@@ -196,7 +210,6 @@ def browse_markets(query):
         near_now = datetime.fromtimestamp(int(time()) // 900 * 900, timezone.utc)
         params.append(("end_date_min", near_now.isoformat()))
     cards = {}
-    swiss = bool(parts is None and q and swiss_referendum_search(clean(q)))
     for _ in range(PAGES_PER_REQUEST):
         if parts is not None:
             events, following = linked_events(parts), None
@@ -234,5 +247,5 @@ def browse_markets(query):
         key = {"trending": "volume_24h", "new": "created_at"}.get(sort, sort)
         result.sort(key=lambda row: row[key], reverse=True)
     if query.get("preview") == ["1"]:
-        result = [preview_card(card) for card in result]
+        result = [preview_card(card, search=bool(q and parts is None)) for card in result]
     return {"events": result, "next_cursor": cursor}

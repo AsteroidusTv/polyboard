@@ -677,6 +677,7 @@ async function load(fresh = false) {
     if (!response.ok) throw new Error(data.error || "Could not load positions.");
     render(data.positions);
     displayedWallet = address;
+    DashboardWidgets.restorePortfolioPosition(data.positions, address, request.signal);
     if (openDiscoveryOnLoad && directReview && !reviewDialog.open) {
       openDiscoveryOnLoad = false;
       const url = new URL(location.href);

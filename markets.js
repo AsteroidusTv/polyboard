@@ -176,10 +176,14 @@
     return Math.round(day.getTime() / 1000);
   }
 
-  function updateLocation(next, replace = false) {
-    const query = parameters(next).toString();
+  function updateLocation(next, replace = false, selection) {
+    const params = parameters(next);
+    catalogLocation = params.toString();
+    if (selection?.event) params.set("event", selection.event);
+    if (selection?.market) params.set("market", selection.market);
+    if (selection?.overview) params.set("overview", "1");
+    const query = params.toString();
     const url = "/markets" + (query ? "?" + query : "") + location.hash;
-    catalogLocation = query ? "?" + query : "";
     if (replace || location.pathname + location.search + location.hash !== url) {
       history[replace ? "replaceState" : "pushState"]({catalogFilters: true}, "", url);
     }
@@ -257,15 +261,16 @@
   }
 
   function showMarket(market, event) {
+    restoreRequest?.abort();
     const selection = {event: event.slug, market: market.slug, overview: eventDialog.open};
-    const destination = new URLSearchParams(location.search);
-    destination.set("event", selection.event);
-    destination.set("market", selection.market);
-    if (selection.overview) destination.set("overview", "1");
+    updateLocation(state, true, selection);
     DashboardWidgets.openMarket({
       ...market, image: market.image || event.image, event_title: event.title, event_slug: event.slug,
-      catalog_query: "?" + destination,
-      onCompare() { history.replaceState({...history.state, catalogSelection: selection}, ""); }
+      catalog_query: location.search,
+      onClose() {
+        if (pane.hidden || new URLSearchParams(location.search).get("market") !== market.slug) return;
+        updateLocation(state, true, eventDialog.open ? {event: event.slug} : undefined);
+      }
     });
   }
 
@@ -276,17 +281,24 @@
     try {
       const params = catalogParameters();
       params.set("event", selection.event);
-      const response = await fetch("/api/markets?" + params, {
-        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)])
-      });
-      if (!response.ok) return;
-      const {events} = await response.json();
+      const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]);
+      const fetchEvent = async (query) => {
+        const response = await fetch("/api/markets?" + query, {signal});
+        if (!response.ok) return;
+        const {events} = await response.json();
+        return events.find(({slug}) => slug === selection.event);
+      };
+      let event = await fetchEvent(params);
+      let market = event?.markets.find(({slug}) => slug === selection.market);
+      if (selection.market && !market && params.size > 1) {
+        event = await fetchEvent(new URLSearchParams({event: selection.event}));
+        market = event?.markets.find(({slug}) => slug === selection.market);
+      }
       if (controller.signal.aborted || pane.hidden) return;
-      const event = events.find(({slug}) => slug === selection.event);
-      const market = event?.markets.find(({slug}) => slug === selection.market);
-      if (!market) return;
-      if (selection.overview && !eventDialog.open) openEvent(event);
-      showMarket(market, event);
+      if (event && (!selection.market || selection.overview) && (!eventDialog.open || selectedEvent?.slug !== event.slug)) {
+        openEvent(event);
+      }
+      if (market) showMarket(market, event);
     } catch {
       // The catalog stays usable when a previously opened market is unavailable.
     }
@@ -522,15 +534,18 @@
   }
 
   function orderedMarkets(event) {
+    if (state.q && !URL.canParse(state.q)) return event.markets;
     const binary = event.markets.every((market) => market.outcomes.every((outcome) => shortOutcome(outcome.label)));
     return binary ? [...event.markets].sort((first, second) =>
       (second.outcomes[0].price ?? -1) - (first.outcomes[0].price ?? -1)) : event.markets;
   }
 
   function openEvent(event) {
+    restoreRequest?.abort();
     eventRequest?.abort();
     eventRequest = new AbortController();
     selectedEvent = event;
+    updateLocation(state, true, {event: event.slug});
     eventMarkets = orderedMarkets(event);
     eventSeries = eventMarkets.filter((market) => /^\d{1,78}$/.test(market.token_id || "")).slice(0, seriesColors.length)
       .map((market, slot) => ({market, slot, color: seriesColors[slot], points: [], visible: true}));
@@ -793,6 +808,8 @@
     if (eventDialog.open) return;
     eventRequest?.abort();
     eventThumbnails.disconnect();
+    const params = new URLSearchParams(location.search);
+    if (!pane.hidden && params.get("event") === selectedEvent?.slug && !params.has("market")) updateLocation(state, true);
   });
   eventCanvas.addEventListener("pointermove", (event) => {
     if (event.pointerType !== "touch") inspectEventHistory(event);
@@ -827,16 +844,22 @@
   new ResizeObserver(drawEventHistory).observe(eventCanvas);
   function restore() {
     if (location.hash.startsWith("#watchlist") || pane.hidden) return;
+    restoreRequest?.abort();
     const params = new URLSearchParams(location.search);
-    const selection = history.state?.catalogSelection || {
+    const selection = {
       event: params.get("event"), market: params.get("market"), overview: params.get("overview") === "1"
     };
-    if (location.search === catalogLocation && !history.state?.catalogSelection) return;
-    state = readState();
-    updateLocation(state, true);
-    load(true);
     const slug = /^[a-z0-9][a-z0-9-]{0,250}$/;
-    if (!document.querySelector("#position-dialog[open]") && slug.test(selection.event || "") && slug.test(selection.market || "")) {
+    const detail = byId("position-dialog");
+    if (detail?.open && detail.dataset.market !== selection.market) detail.close();
+    if (eventDialog.open && (selectedEvent?.slug !== selection.event || selection.market && !selection.overview)) eventDialog.close();
+    const next = readState();
+    if (parameters(next).toString() !== catalogLocation) {
+      state = next;
+      updateLocation(state, true, slug.test(selection.event || "") ? selection : undefined);
+      load(true);
+    }
+    if (slug.test(selection.event || "") && (selection.market ? slug.test(selection.market) && !detail?.open : !eventDialog.open)) {
       restoreSelection(selection);
     }
   }

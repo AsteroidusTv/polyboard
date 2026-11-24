@@ -55,9 +55,9 @@ const DashboardWatchlist = (() => {
     return next;
   }
 
-  async function request(data, signal) {
+  async function request(data, signal, query = "") {
     const options = data ? {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(data)} : {};
-    const response = await fetch("/api/watchlist", {...options, signal});
+    const response = await fetch("/api/watchlist" + query, {...options, signal});
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "The Watchlist couldn’t load.");
     return result;
@@ -121,10 +121,7 @@ const DashboardWatchlist = (() => {
         const followed = state.watches.some(({slug}) => slug === selected.slug);
         if (followed) {
           confirmUnfollow(selected);
-        } else {
-          const opening = followAndOpenAlert(selected);
-          perform(control, () => opening, error);
-        }
+        } else prepareFollow(selected);
       });
       addAlert.addEventListener("click", () => {
         const selected = detailButtons.get(control).market;
@@ -160,11 +157,15 @@ const DashboardWatchlist = (() => {
     }));
     const primary = outcomes.findIndex((side) => side.token_id === token);
     if (primary > 0) outcomes.reverse();
-    const destination = location.search + "#watchlist/market/" + market.slug;
+    const hash = "#watchlist/market/" + market.slug;
+    const destination = (panes ? location.search : "") + hash;
+    if (panes && view() === "watchlist") history.replaceState(history.state, "", "/markets" + destination);
     DashboardWidgets.openMarket({...market, outcomes, token_id: outcomes[0].token_id,
       compare: outcomes.some((side) => /^yes$/i.test(side.label)), alert_target: target && Number(target),
       catalog_query: destination,
-      onCompare() { history.replaceState(history.state, "", "/markets" + destination); }});
+      onClose() {
+        if (panes && location.hash === hash) history.replaceState(history.state, "", "/markets" + location.search + "#watchlist");
+      }});
   }
 
   function sparkline(quote) {
@@ -301,23 +302,21 @@ const DashboardWatchlist = (() => {
     return alertDialog.querySelector(".watch-dialog-body");
   }
 
-  async function followAndOpenAlert(market) {
+  async function prepareFollow(market) {
     const body = alertBody(market);
     const status = el("p", "Loading alert settings…", "muted");
     status.setAttribute("role", "status");
     body.replaceChildren(status);
     if (!alertDialog.open) alertDialog.showModal();
     try {
-      const next = await change({action: "follow", slug: market.slug});
-      const followed = next.watches.find(({slug}) => slug === market.slug);
-      if (!followed) throw new Error("This market couldn’t be followed.");
-      if (alertDialog.open && body.contains(status)) openAlert(followed, market.token_id, true);
+      const preview = await request(undefined, AbortSignal.timeout(15000), "?" + new URLSearchParams({market: market.slug}));
+      if (alertDialog.open && body.contains(status)) openAlert(preview, market.token_id, true);
     } catch (failure) {
-      if (!alertDialog.open || !body.contains(status)) throw failure;
+      if (!alertDialog.open || !body.contains(status)) return;
       status.className = "negative";
       status.setAttribute("role", "alert");
-      status.textContent = failure.message;
-      const retry = button("Try again", () => perform(retry, () => followAndOpenAlert(market), status));
+      status.textContent = failure.name === "TimeoutError" ? "Alert settings couldn’t load. Try again." : failure.message;
+      const retry = button("Try again", () => prepareFollow(market));
       const actions = el("div", undefined, "watch-inline watch-form-actions");
       actions.append(retry);
       body.append(actions);
@@ -347,8 +346,11 @@ const DashboardWatchlist = (() => {
     const condition = byId("watch-condition");
     const direction = byId("watch-direction");
     const value = byId("watch-value");
+    const valueLabel = byId("watch-value-label");
     const submit = form.querySelector("[type=submit]");
+    const secondary = form.querySelector("[type=button]");
     const error = form.querySelector("[role=alert]");
+    let saving = false;
     for (const side of market.outcomes) {
       const option = el("option", side.label);
       option.value = side.token_id;
@@ -361,28 +363,43 @@ const DashboardWatchlist = (() => {
       if (formChange === "watch-condition") value.value = "";
       const numeric = Number(value.value);
       const target = relative ? Number(quote?.baseline) * (1 + (direction.value === "above" ? numeric : -numeric) / 100) : numeric / 100;
-      byId("watch-value-label").textContent = relative ? "Change (%)" : "Target price (¢)";
+      valueLabel.textContent = relative ? "Change (%)" : "Target price (¢)";
       direction.options[0].text = relative ? "Gain" : "Rises to";
       direction.options[1].text = relative ? "Drop" : "Falls to";
       value.placeholder = relative ? "10" : "60";
-      const sentence = relative ? (quote?.baseline ? "Followed at " + showPrice(quote.baseline) + "." :
+      const baselineLabel = fromFollow ? "Current midpoint " : "Followed at ";
+      const sentence = relative ? (quote?.baseline ? baselineLabel + showPrice(quote.baseline) + "." :
         "Waiting for a reference price.") : (quote ? "Current midpoint " + showPrice(quote.current) + "." : "Current midpoint unavailable.");
       const valid = Boolean(value.value) && target > 0 && target < 1;
       const hasCrossed = quote && valid && (direction.value === "above" ? Number(quote.current) >= target : Number(quote.current) <= target);
       form.querySelector(".watch-preview").textContent = sentence +
-        (value.value && valid && relative ? " Alert at " + showPrice(target) + "." : "") +
+        (value.value && valid && relative ? (fromFollow ? " Estimated alert at " : " Alert at ") + showPrice(target) + "." : "") +
         (hasCrossed ? " It must cross this level again to trigger." : "");
-      submit.disabled = !valid;
+      submit.disabled = saving || !valid;
+    }
+    async function save(alert) {
+      if (saving) return;
+      saving = submit.disabled = secondary.disabled = true;
+      error.textContent = "";
+      try {
+        await change(fromFollow ? {action: "follow", slug: market.slug, alert}
+          : {action: "add-alert", slug: market.slug, ...alert});
+        if (form.isConnected && alertDialog.open) alertDialog.close();
+      } catch (failure) {
+        error.textContent = failure.message;
+      } finally {
+        saving = secondary.disabled = false;
+        preview();
+      }
     }
     form.addEventListener("input", (event) => preview(event.target.id));
-    form.querySelector("[type=button]").addEventListener("click", () => alertDialog.close());
+    secondary.addEventListener("click", () => {
+      if (fromFollow) save();
+      else alertDialog.close();
+    });
     form.addEventListener("submit", (event) => {
       event.preventDefault();
-      perform(submit, async () => {
-        await change({action: "add-alert", slug: market.slug, token: outcome.value,
-          direction: direction.value, kind: condition.value, value: String(Number(value.value))});
-        alertDialog.close();
-      }, error);
+      save({token: outcome.value, direction: direction.value, kind: condition.value, value: String(Number(value.value))});
     });
     preview();
     if (!alertDialog.open) alertDialog.showModal();
@@ -504,8 +521,9 @@ const DashboardWatchlist = (() => {
     const slug = location.hash.match(/^#watchlist\/market\/([a-z0-9-]+)$/)?.[1];
     if (slug) {
       const market = state.watches.find((item) => item.slug === slug);
-      if (market && !document.querySelector("#position-dialog[open]")) openMarket(market);
-      history.replaceState(history.state, "", "/markets" + location.search + "#watchlist");
+      const open = document.querySelector("#position-dialog[open]");
+      if (market && open?.dataset.market !== slug) openMarket(market);
+      if (!market) history.replaceState(history.state, "", "/markets" + location.search + "#watchlist");
       return;
     }
     const id = location.hash.match(/^#watchlist\/alerts\/(\d+)$/)?.[1];

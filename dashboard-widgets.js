@@ -19,6 +19,47 @@ const DashboardWidgets = (() => {
   const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
   const activeUpdates = new WeakMap();
   const marketImageOrigin = "https://polymarket-upload.s3.us-east-2.amazonaws.com/";
+  const positionToken = /^\d{1,78}$/;
+
+  function positionQuery(params = new URLSearchParams(location.search)) {
+    const query = new URLSearchParams();
+    if (positionToken.test(params.get("position") || "")) query.set("position", params.get("position"));
+    if (params.get("view") === "executions") query.set("view", "executions");
+    return query;
+  }
+
+  function positionBack(path, params) {
+    const query = positionQuery(params);
+    return query.size ? path + "?" + query : path;
+  }
+
+  function rememberPosition(token) {
+    const url = new URL(location.href);
+    if (token) url.searchParams.set("position", token);
+    else url.searchParams.delete("position");
+    history.replaceState(history.state, "", url);
+  }
+
+  function restorePosition(positions, open) {
+    const token = positionQuery().get("position");
+    if (!token || detail?.dialog.open) return true;
+    const selected = positions.find((position) => String(position.token_id) === token);
+    if (!selected) return false;
+    open(selected);
+    return true;
+  }
+
+  async function restorePortfolioPosition(positions, wallet, signal) {
+    if (restorePosition(positions, (position) => openPosition({...position, status: "open"}, wallet))) return;
+    try {
+      const summary = await json("/api/trade-summary", {wallet}, signal);
+      if (!signal.aborted && DashboardSettings.wallet === wallet) {
+        restorePosition(summary.positions, (position) => openPosition(position));
+      }
+    } catch {
+      // The portfolio remains available when historical positions cannot be restored.
+    }
+  }
 
   function marketImageSource(url) {
     if (!document.body.hasAttribute("data-market-thumbnails") || !url.startsWith(marketImageOrigin)) return url;
@@ -563,8 +604,16 @@ const DashboardWidgets = (() => {
       const row = event.target.closest("[data-trade-index]");
       if (row) panel.selectTrade(Number(row.dataset.tradeIndex));
     });
+    dialog.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      // Restoring an event and a market together can group their native close requests.
+      event.preventDefault();
+      dialog.close();
+    });
     dialog.addEventListener("close", () => {
-      if (!dialog.open) detailRequest?.abort();
+      if (dialog.open) return;
+      detailRequest?.abort();
+      detail.onClose?.();
     });
     document.querySelector("main").append(dialog);
     return {dialog, panel};
@@ -630,24 +679,19 @@ const DashboardWidgets = (() => {
     const namedOutcome = !preview && position.outcome && !/^(yes|no)$/i.test(position.outcome);
     compare.hidden = !/^[a-z0-9][a-z0-9-]{0,250}$/.test(position.slug || "") ||
       preview?.compare === false || Boolean(position.is_combo || namedOutcome);
-    compare.onclick = compare.hidden ? null : preview?.onCompare || null;
+    const context = preview?.catalog_query !== undefined
+      ? new URLSearchParams({catalog: preview.catalog_query})
+      : positionQuery();
+    if (preview?.catalog_query === undefined) {
+      if (location.pathname === "/trades") context.set("source", "trades");
+      if (location.pathname === "/") context.set("source", "portfolio");
+    }
+    context.set("market", position.slug);
     holders.hidden = !/^[a-z0-9][a-z0-9-]{0,250}$/.test(position.slug || "") || Boolean(position.is_combo);
     if (holders.hidden) holders.removeAttribute("href");
-    else {
-      const params = new URLSearchParams({market: position.slug});
-      if (preview?.catalog_query !== undefined) params.set("catalog", preview.catalog_query);
-      else if (location.pathname === "/trades") params.set("source", "trades");
-      else if (location.pathname === "/") params.set("source", "portfolio");
-      holders.href = "/holders?" + params;
-    }
-    holders.onclick = holders.hidden ? null : preview?.onCompare || null;
+    else holders.href = "/holders?" + context;
     if (compare.hidden) compare.removeAttribute("href");
-    else {
-      const destination = {market: position.slug};
-      if (preview?.catalog_query !== undefined) destination.catalog = preview.catalog_query;
-      else if (location.pathname === "/trades") destination.source = "trades";
-      compare.href = "/precedents?" + new URLSearchParams(destination);
-    }
+    else compare.href = "/precedents?" + context;
     const meta = dialog.querySelector("#activity-meta");
     dialog.querySelector("#activity-summary").setAttribute("aria-label", preview ? "Market summary" : "Position summary");
     dialog.querySelector(".activity-dismiss").setAttribute("aria-label", preview ? "Close market" : "Close position");
@@ -717,6 +761,15 @@ const DashboardWidgets = (() => {
     const request = new AbortController();
     detailRequest = request;
     const {dialog, panel} = detail;
+    dialog.dataset.market = position.slug || "";
+    detail.onClose = preview?.onClose;
+    if (!preview && ["/", "/trades"].includes(location.pathname) && positionToken.test(position.token_id || "")) {
+      const token = String(position.token_id);
+      rememberPosition(token);
+      detail.onClose = () => {
+        if (positionQuery().get("position") === token) rememberPosition();
+      };
+    }
     const heading = preview ? (preview.outcomes?.[0]?.label || "Yes") + " price history" : undefined;
     const emptyHistory = {heading, points: [], markers: []};
     positionHeader(dialog, position, null, preview);
@@ -798,6 +851,7 @@ const DashboardWidgets = (() => {
     });
   }
 
-  return {portfolio, walletPerformance, openMarket, openPosition, marketTitle, marketImageSource, positionBadges, statuses, softUpdate, slidingSelection, loadOnScroll,
+  return {portfolio, walletPerformance, openMarket, openPosition, restorePosition, restorePortfolioPosition,
+    positionQuery, positionBack, marketTitle, marketImageSource, positionBadges, statuses, softUpdate, slidingSelection, loadOnScroll,
     setPortfolioRange(days) { portfolioPanel?.setRange(days); }};
 })();

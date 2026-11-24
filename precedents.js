@@ -178,6 +178,7 @@ function caseRow(row, horizons) {
   const destination = new URLSearchParams({market: row.slug, source: "precedents", from: report.target.slug, scope: report.scope});
   if (context.has("catalog")) destination.set("catalog", context.get("catalog"));
   if (context.has("source")) destination.set("return_source", context.get("source"));
+  for (const [key, value] of DashboardWidgets.positionQuery(context)) destination.set(key, value);
   holderPage.href = "/holders?" + destination;
   holderPage.setAttribute("aria-label", "Holder analysis · " + row.title);
   tags.append(holderPage);
@@ -423,10 +424,10 @@ function route() {
     back.href = "/markets" + (catalog.startsWith("?") || /^#watchlist(?:\/market\/[a-z0-9-]+)?$/.test(catalog) ? catalog : "");
     back.textContent = "← New trade";
   } else if (params.get("source") === "trades") {
-    back.href = "/trades";
+    back.href = DashboardWidgets.positionBack("/trades", params);
     back.textContent = "← Trade history";
   } else {
-    back.href = "/";
+    back.href = DashboardWidgets.positionBack("/", params);
     back.textContent = "← Portfolio";
   }
   compare(market, params.get("scope") === "broad" ? "broad" : "focused");
