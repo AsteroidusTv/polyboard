@@ -728,13 +728,50 @@ button.chart-trade-row:is(:hover, :focus-visible) { background: #26324b; outline
 }
 @keyframes refresh-turn { to { transform: rotate(360deg); } }
 
-#portfolio-contributions > summary { cursor: pointer; font-weight: 650; }
 #contribution-chart > .muted { margin: 8px 0; }
 #contribution-chart canvas { height: clamp(215px, 33vh, 330px); }
 .contribution-controls { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
 .contribution-controls select { color: inherit; background: #1b2333; border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px; }
 .contribution-controls output { color: var(--muted); font-size: .84rem; }
-#contribution-chart input[type="range"] { display: block; width: 100%; margin: 4px 0 12px; }
+.contribution-scrubber {
+  --scrub-progress: 0%;
+  --scrub-track: linear-gradient(to right, #8d9fe0 var(--scrub-progress), #303b51 var(--scrub-progress));
+  --scrub-thumb: #c1ceff;
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 30px;
+  margin: 0 0 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  cursor: grab;
+}
+.contribution-scrubber:active { cursor: grabbing; }
+.contribution-scrubber:focus-visible { outline: 2px solid var(--scrub-thumb); outline-offset: 2px; }
+.contribution-scrubber::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: var(--scrub-track); }
+.contribution-scrubber::-moz-range-track { height: 4px; border-radius: 2px; background: var(--scrub-track); }
+.contribution-scrubber::-webkit-slider-thumb {
+  appearance: none;
+  width: 10px;
+  height: 16px;
+  margin-top: -6px;
+  border: 1px solid #111720;
+  border-radius: 4px;
+  background: var(--scrub-thumb);
+}
+.contribution-scrubber::-moz-range-thumb {
+  box-sizing: border-box;
+  width: 10px;
+  height: 16px;
+  border: 1px solid #111720;
+  border-radius: 4px;
+  background: var(--scrub-thumb);
+}
+@media (forced-colors: active) {
+  .contribution-scrubber { appearance: auto; }
+}
 .contribution-rankings { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 10px; }
 .contribution-rankings > div { min-width: 0; border: 1px solid var(--border); padding: 10px; border-radius: 8px; }
 .contribution-rankings h3 { margin: 0 0 6px; font-size: .9rem; }
