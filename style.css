@@ -88,7 +88,6 @@ section { margin-top: 24px; }
   }
 }
 #codex-actions button { display: block; width: 100%; padding-inline: 10px; text-align: start; }
-#portfolio-contributions > .chart-header { align-items: center; }
 h2 { font-size: 1.35rem; letter-spacing: -.022em; }
 #count { display: inline-block; vertical-align: 2px; margin-left: 5px; padding: 1px 8px; border-radius: 16px; background: var(--surface); color: var(--muted); font-size: .8rem; }
 #status { margin-top: 2px; font-size: .8rem; }
@@ -358,7 +357,7 @@ tbody tr:nth-child(odd) { --position-background: var(--surface); }
 .market-chart .chart-value { font-size: .83rem; line-height: 1.45; color: var(--muted); font-weight: 500; }
 .chart-controls { display: flex; flex-wrap: wrap; gap: 6px; }
 .chart-trades-toggle { height: 36px; padding-inline: 10px; font-size: .78rem; }
-.chart-trades-toggle[aria-pressed="true"] { border-color: #586b9e; background: #252e49; color: #d9e2ff; }
+.chart-trades-toggle:is([aria-pressed="true"], [aria-expanded="true"]) { border-color: #586b9e; background: #252e49; color: #d9e2ff; }
 .chart-ranges { display: flex; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: 8px; }
 .chart-ranges button { min-width: 34px; height: 28px; padding: 0 5px; background: transparent; color: var(--muted); border: 0; border-radius: 5px; font-size: .78rem; }
 .chart-ranges button:hover { background: #1b2333; color: #d9e2ff; }
@@ -746,6 +745,8 @@ button.chart-trade-row:is(:hover, :focus-visible) { background: #26324b; outline
 }
 @keyframes refresh-turn { to { transform: rotate(360deg); } }
 
+#portfolio-contributions { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+#contribution-heading { font-size: 1rem; }
 #contribution-chart > .muted { margin: 8px 0; }
 #contribution-chart canvas { height: clamp(215px, 33vh, 330px); }
 .contribution-controls { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }

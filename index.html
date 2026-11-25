@@ -38,13 +38,13 @@
       <div><dt>Open value</dt><dd id="total-value"></dd></div>
       <div><dt>Unrealized P&L</dt><dd id="total-pnl"></dd></div>
     </dl>
-    <section id="portfolio-chart" class="portfolio-chart" aria-label="Portfolio performance" hidden></section>
-    <section id="portfolio-contributions" class="portfolio-chart" aria-labelledby="contribution-heading" hidden>
-      <div class="chart-header">
-        <h2 id="contribution-heading">Position contributions</h2>
-        <button type="button" id="contribution-toggle" class="secondary-button chart-trades-toggle" aria-expanded="false" aria-controls="contribution-chart">Show chart</button>
-      </div>
-      <div id="contribution-chart" hidden></div>
+    <section id="portfolio-chart" class="portfolio-chart" aria-label="Portfolio performance" hidden>
+      <div id="portfolio-performance"></div>
+      <button type="button" id="contribution-toggle" class="secondary-button chart-trades-toggle" aria-expanded="false" aria-controls="portfolio-contributions">Show position contributions</button>
+      <section id="portfolio-contributions" aria-labelledby="contribution-heading" hidden>
+        <h3 id="contribution-heading">Position contributions</h3>
+        <div id="contribution-chart"></div>
+      </section>
     </section>
     <section aria-labelledby="positions-heading">
       <div class="section-heading positions-heading">

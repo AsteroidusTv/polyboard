@@ -145,7 +145,7 @@ const DashboardWidgets = (() => {
     return button;
   }
 
-  function chartPanel(root, isPrice, onTrade, showActivity = !isPrice) {
+  function chartPanel(root, isPrice, onTrade, showActivity = !isPrice, extraControl) {
     root.innerHTML = `
       <div class="chart-header">
         <div><h2></h2><div class="chart-value" hidden></div></div>
@@ -189,6 +189,11 @@ const DashboardWidgets = (() => {
     const plot = root.querySelector(".chart-plot");
     const controls = root.querySelector(".chart-controls");
     const ranges = controls.firstElementChild;
+    if (extraControl) {
+      const actions = node("div", undefined, "chart-controls");
+      controls.replaceWith(actions);
+      actions.append(controls, extraControl);
+    }
     for (const group of controls.querySelectorAll(".chart-ranges")) slidingSelection(group);
     const tradesToggle = controls.querySelector(".chart-trades-toggle");
     const status = root.querySelector(".chart-status");
@@ -400,8 +405,10 @@ const DashboardWidgets = (() => {
     portfolioRequest?.abort();
     const request = new AbortController();
     portfolioRequest = request;
-    portfolioPanel ||= chartPanel(root, false);
+    const toggle = root.querySelector("#contribution-toggle");
+    portfolioPanel ||= chartPanel(root.querySelector("#portfolio-performance"), false, undefined, true, toggle);
     root.hidden = false;
+    contributions(root.querySelector("#portfolio-contributions"), toggle, wallet, request.signal, fresh);
     let positions;
     return loadPortfolioChart(portfolioPanel, wallet, request.signal, {
       retry: "Use Refresh to try again.",
@@ -424,11 +431,9 @@ const DashboardWidgets = (() => {
     });
   }
 
-  function contributions(root, wallet, signal, fresh) {
-    const box = root.querySelector("#contribution-chart");
-    const toggle = root.querySelector("#contribution-toggle");
+  function contributions(panel, toggle, wallet, signal, fresh) {
+    const box = panel.querySelector("#contribution-chart");
     box.replaceChildren();
-    root.hidden = false;
     let loading;
 
     function load() {
@@ -438,14 +443,14 @@ const DashboardWidgets = (() => {
     }
 
     toggle.onclick = () => {
-      const open = box.hidden;
-      box.hidden = !open;
+      const open = panel.hidden;
+      panel.hidden = !open;
       toggle.setAttribute("aria-expanded", String(open));
-      toggle.textContent = open ? "Close chart" : "Show chart";
+      toggle.textContent = open ? "Hide position contributions" : "Show position contributions";
       if (open) load();
     };
 
-    if (!box.hidden) load();
+    if (!panel.hidden) load();
   }
 
   async function loadContributions(box, wallet, signal, fresh) {
@@ -1033,7 +1038,7 @@ const DashboardWidgets = (() => {
     });
   }
 
-  return {portfolio, contributions, walletPerformance, openMarket, openPosition, restorePosition, restorePortfolioPosition,
+  return {portfolio, walletPerformance, openMarket, openPosition, restorePosition, restorePortfolioPosition,
     positionQuery, positionBack, marketTitle, marketImageSource, positionBadges, statuses, softUpdate, slidingSelection, loadOnScroll,
     setPortfolioRange(days) { portfolioPanel?.setRange(days); }};
 })();
