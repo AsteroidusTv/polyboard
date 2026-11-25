@@ -1,6 +1,6 @@
 # Polyboard
 
-A dashboard for Polymarket portfolios, market discovery, price alerts, and MetaMask limit orders.
+A dashboard for Polymarket portfolios, market discovery, price alerts, and MetaMask market and limit orders.
 
 ## Run locally
 
@@ -82,9 +82,9 @@ Use **Filters** to select a Yes or No price band, a scheduled end range, minimum
 
 Open an active market or position and select **Trade**. Connect MetaMask on Polygon and confirm the public trading wallet address shown in your Polymarket profile. This can differ from your MetaMask address. Start with a funded Polymarket account and manage any required token approvals on Polymarket.
 
-Choose Buy or Sell, the outcome, the limit price and the share quantity. Review the details before signing. Good-till-canceled orders can remain on the book, and you can refresh and cancel open orders from the same signer in the ticket. On acceptance, **Add trade note** saves a dated journal entry with the order ID. Acceptance and matching are reported separately from settlement.
+Choose Buy or Sell and an outcome. A market buy takes an amount in pUSD and a market sell takes a share quantity. The ticket shows an order-book estimate and the worst price allowed by the signed order. Market orders cancel any unfilled amount. Limit orders take a price in cents and a share quantity. You can refresh and cancel open limit orders from the same signer in the ticket. On acceptance, **Add trade note** saves a dated journal entry with the order ID. Acceptance and matching are reported separately from settlement.
 
-MetaMask signs the session and each order. The browser keeps the Polymarket credentials in tab memory and sends signed requests directly to Polymarket. Disconnecting, reloading, or changing account or network clears the trading session. The separately displayed portfolio wallet remains a public read-only lookup.
+MetaMask signs the session and each order. The browser keeps the Polymarket credentials in tab memory and sends signed requests directly to Polymarket. Disconnecting, reloading, or changing account or network clears the trading session. A same-site cookie remembers the public Polymarket trading address for the MetaMask account that authorized it. The separately displayed portfolio wallet remains a public read-only lookup.
 
 The self-hosted bundle is built from the pinned SDK with `npm ci --prefix trading --ignore-scripts` and `npm run --prefix trading build`.
 

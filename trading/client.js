@@ -1,4 +1,4 @@
-import {createPublicClient, OrderSide, SignerType, production} from "@polymarket/client";
+import {createPublicClient, OrderSide, OrderType, SignerType, production} from "@polymarket/client";
 import {fetchBalanceAllowance} from "@polymarket/client/actions";
 
 const clob = "https://clob.polymarket.com";
@@ -9,6 +9,7 @@ export const orderIdPattern = /^0x[0-9a-f]{64}$/i;
 const polygon = 137;
 const reads = {retries: 0, timeout: 12000};
 const lower = (address) => String(address || "").toLowerCase();
+const unit = 1000000n;
 const zero = "0x" + "0".repeat(64);
 
 export class TicketError extends Error {}
@@ -91,9 +92,17 @@ export function verifyOrderSignature(payload, session, intent) {
     lower(order.builder) === zero && lower(order.metadata) === zero,
   "The signature request does not match your order.");
   const buy = intent.side === OrderSide.BUY;
-  assert(BigInt(order.makerAmount) === (buy ? intent.notional : intent.quantity) &&
-    BigInt(order.takerAmount) === (buy ? intent.quantity : intent.notional),
-  "The signed size or price does not match your review.");
+  const maker = BigInt(order.makerAmount);
+  const taker = BigInt(order.takerAmount);
+  if (intent.type === "market") {
+    // The SDK floors BUY shares. Its implied price must stay below the next possible exchange tick.
+    const protectedPrice = buy ? maker * unit < taker * (intent.bound + 100n) : taker * unit >= maker * intent.bound;
+    assert(maker > 0n && taker > 0n && protectedPrice &&
+      (buy ? maker <= intent.budget : maker === intent.quantity), "The signed size or price exceeds your review.");
+    return;
+  }
+  assert(maker === (buy ? intent.notional : intent.quantity) && taker === (buy ? intent.quantity : intent.notional),
+    "The signed size or price does not match your review.");
 }
 
 async function sign(provider, session, payload, intent) {
@@ -150,19 +159,95 @@ export function fixed(value, decimals) {
   return BigInt(parts[1] + (parts[2] || "").padEnd(6, "0"));
 }
 
-export function orderIntent(market, book, outcome, side, price, size) {
+export function decimal(units) {
+  const digits = String(units).padStart(7, "0");
+  return (digits.slice(0, -6) + "." + digits.slice(-6)).replace(/\.?0+$/, "");
+}
+
+function orderIdentity(market, book, outcome, side) {
   assert([OrderSide.BUY, OrderSide.SELL].includes(side), "Choose Buy or Sell.");
-  const sharePrice = fixed(price, 4);
-  const quantity = fixed(size, 2);
-  const tick = fixed(book.tickSize, 4);
-  assert(tick > 0n && sharePrice >= tick && sharePrice <= 1000000n - tick && sharePrice % tick === 0n,
-    "Use a price on the " + book.tickSize + " pUSD increment.");
-  assert(quantity > 0n && quantity >= fixed(book.minOrderSize, 6), "Minimum order: " + book.minOrderSize + " shares.");
   const contracts = production.contracts;
-  return {assetId: outcome.assetId, side, price, size, quantity, notional: quantity * sharePrice / 1000000n,
-    protocolVersion: market.version === "v2" ? "3" : "2",
+  return {assetId: outcome.assetId, side, protocolVersion: market.version === "v2" ? "3" : "2",
     exchange: lower(market.version === "v2" ? contracts.exchangeV3 :
       book.negRisk ? contracts.negRiskExchange : contracts.standardExchange)};
+}
+
+function validTick(book, price) {
+  const tick = fixed(book.tickSize, 4);
+  return tick > 0n && price >= tick && price <= unit - tick && price % tick === 0n;
+}
+
+export function orderIntent(market, book, outcome, side, price, size) {
+  const sharePrice = fixed(price, 4);
+  const quantity = fixed(size, 2);
+  assert(validTick(book, sharePrice), "Use a price on the " + Number(book.tickSize) * 100 + "¢ increment.");
+  assert(quantity > 0n && quantity >= fixed(book.minOrderSize, 6), "Minimum limit order: " + book.minOrderSize + " shares.");
+  return {...orderIdentity(market, book, outcome, side), type: "limit", price, size, quantity,
+    notional: quantity * sharePrice / unit};
+}
+
+function depth(book, side) {
+  const buy = side === OrderSide.BUY;
+  const normalized = (value) => fixed(String(value).includes(".") ? String(value).replace(/\.?0+$/, "") : value, 6);
+  return (buy ? book.asks : book.bids).flatMap(({price, size}) => {
+    try {
+      const level = {price: normalized(price), size: normalized(size)};
+      return validTick(book, level.price) && level.size > 0n ? [level] : [];
+    } catch (error) {
+      if (!(error instanceof TicketError)) throw error;
+      return [];
+    }
+  }).sort((a, b) => Number(buy ? a.price - b.price : b.price - a.price));
+}
+
+export function marketIntent(market, book, outcome, side, input) {
+  const identity = orderIdentity(market, book, outcome, side);
+  const buy = side === OrderSide.BUY;
+  const total = fixed(input, 2);
+  assert(total > 0n, buy ? "Enter a positive amount." : "Enter a positive share quantity.");
+  let remaining = total;
+  let shares = 0n;
+  let gross = 0n;
+  let bound;
+  let fees = 0n;
+  const schedule = market.trading?.feeSchedule;
+  const rate = Number(schedule?.rate);
+  const exponent = Number(schedule?.exponent);
+  const feeKnown = market.trading?.feesEnabled === false || (Number.isFinite(rate) && rate >= 0 && rate <= 1 &&
+    Number.isFinite(exponent) && exponent >= 0);
+  for (const level of depth(book, side)) {
+    const price = Number(level.price) / Number(unit);
+    const feePerShare = feeKnown && market.trading?.feesEnabled !== false ? rate * (price * (1 - price)) ** exponent : 0;
+    const feeUnits = BigInt(Math.ceil(feePerShare * Number(unit)));
+    const demand = buy ? remaining * unit / (level.price + feeUnits) : remaining;
+    if (demand === 0n) break;
+    const filled = demand < level.size ? demand : level.size;
+    const cost = filled * level.price / unit;
+    if (cost === 0n) continue;
+    const fee = filled * feeUnits / unit;
+    gross += cost;
+    fees += fee;
+    shares += filled;
+    bound = level.price;
+    remaining -= buy ? cost + fee : filled;
+    if (filled === demand || remaining === 0n) break;
+  }
+  assert(bound, buy ? "No offers can fill that amount." : "No bids are available for this outcome.");
+  const partiallyQuoted = buy ? remaining >= 10000n : remaining > 0n;
+  return {...identity, type: "market", input, bound, shares, gross, fee: feeKnown ? fees : null, partiallyQuoted,
+    budget: buy ? total : null, quantity: buy ? null : total};
+}
+
+export function recheckOrder(market, book, outcome, intent) {
+  const checked = intent.type === "market" ? orderIdentity(market, book, outcome, intent.side) :
+    orderIntent(market, book, outcome, intent.side, intent.price, intent.size);
+  assert(checked.exchange === intent.exchange && checked.protocolVersion === intent.protocolVersion,
+    "The trading contract changed. Reopen this ticket.");
+  if (intent.type !== "market") return;
+  const buy = intent.side === OrderSide.BUY;
+  assert(validTick(book, intent.bound) && depth(book, intent.side)
+    .some(({price}) => buy ? price <= intent.bound : price >= intent.bound),
+  "The book moved past your price protection. Edit and review a fresh quote.");
 }
 
 export async function marketFor(slug) {
@@ -198,13 +283,20 @@ export async function placeOrder(session, intent, dispatch) {
   session.intent = intent;
   let order;
   try {
-    order = await session.client.createLimitOrder({
-      assetId: intent.assetId, side: intent.side, price: intent.price, size: intent.size
-    });
+    const common = {assetId: intent.assetId, side: intent.side};
+    if (intent.type === "market") {
+      const bound = decimal(intent.bound);
+      const params = intent.side === OrderSide.BUY ?
+        {amount: intent.input, maxSpend: intent.input, maxPrice: bound} : {shares: intent.input, minPrice: bound};
+      order = await session.client.createMarketOrder({...common, ...params, orderType: OrderType.FAK});
+    } else {
+      order = await session.client.createLimitOrder({...common, price: intent.price, size: intent.size});
+    }
   } finally {
     session.intent = null;
   }
-  assert(order.orderType === "GTC" && BigInt(order.expiration) === 0n, "Unexpected limit order duration.");
+  const expectedType = intent.type === "market" ? OrderType.FAK : OrderType.GTC;
+  assert(order.orderType === expectedType && BigInt(order.expiration) === 0n, "Unexpected order duration.");
   await currentSigner(session.provider, session.address);
   dispatch();
   return session.client.postOrder(order);

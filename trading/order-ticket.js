@@ -1,10 +1,11 @@
 import {
-  addressPattern, authenticate, balanceFor, bookFor, cancelOrder, connectWallet, funderFor, marketFor,
-  openOrders, orderIdPattern, orderIntent, OrderSide, placeOrder, TicketError, verifyEligibility
+  addressPattern, authenticate, balanceFor, bookFor, cancelOrder, connectWallet, decimal, fixed, funderFor, marketFor, marketIntent,
+  openOrders, orderIdPattern, orderIntent, OrderSide, placeOrder, recheckOrder, TicketError, verifyEligibility
 } from "./client.js";
 
 const slugPattern = /^[a-z0-9][a-z0-9-]{0,250}$/;
 const number = new Intl.NumberFormat("en-US", {maximumFractionDigits: 6});
+const quoteNumber = new Intl.NumberFormat("en-US", {maximumFractionDigits: 4});
 const amount = (units) => number.format(Number(units) / 1000000);
 const discovered = new Set();
 const walletEvents = new EventTarget();
@@ -27,6 +28,27 @@ function metaMask() {
     ? "More than one MetaMask provider was detected. Choose one in your browser extensions."
     : "Open Polyboard in a browser with MetaMask installed.");
   return providers[0];
+}
+
+const walletCookie = "polyboard_trading_wallet";
+
+function savedFunder(address) {
+  try {
+    const entry = document.cookie.split("; ").find((cookie) => cookie.startsWith(walletCookie + "="));
+    const [signer, funder] = entry?.slice(walletCookie.length + 1).split(":") || [];
+    return signer === address && addressPattern.test(funder || "") ? funder : "";
+  } catch {
+    return "";
+  }
+}
+
+function rememberFunder({address, wallet}) {
+  const secure = location.protocol === "https:" ? "; Secure" : "";
+  try {
+    document.cookie = `${walletCookie}=${address}:${wallet}; Path=/; Max-Age=31536000; SameSite=Strict${secure}`;
+  } catch {
+    // Cookies are optional for trading.
+  }
 }
 
 function disconnect() {
@@ -58,11 +80,13 @@ function failureText(error, fallback) {
   return fallback;
 }
 
-function priceText(levels, side) {
-  if (!levels.length) return "—";
-  const prices = levels.map((level) => Number(level.price));
-  return number.format(side === "bid" ? Math.max(...prices) : Math.min(...prices));
+function bestPrice(levels, buy) {
+  if (!levels.length) return null;
+  return (buy ? Math.min : Math.max)(...levels.map((level) => Number(level.price)));
 }
+
+const cents = (price) => price == null ? "—" : number.format(price * 100) + "¢";
+const displayBound = (units) => cents(Number(units) / 1000000);
 
 export function open(position, {sell = false, savedWallet = ""} = {}) {
   if (active || !slugPattern.test(position.slug || "")) return;
@@ -80,12 +104,14 @@ export function open(position, {sell = false, savedWallet = ""} = {}) {
         <button type="button" data-connect class="secondary-button">Connect MetaMask</button>
         <div data-account hidden>
           <p class="muted order-address"></p>
-          <label for="order-funder">Polymarket trading wallet</label>
-          <div class="order-inline">
-            <input id="order-funder" type="text" placeholder="0x…" spellcheck="false" autocomplete="off">
-            <button type="button" data-enable class="secondary-button">Enable trading</button>
+          <div data-wallet-setup>
+            <label for="order-funder">Polymarket trading wallet</label>
+            <div class="order-inline">
+              <input id="order-funder" type="text" placeholder="0x…" spellcheck="false" autocomplete="off">
+              <button type="button" data-enable class="secondary-button">Enable trading</button>
+            </div>
+            <p class="muted">Use the public wallet address shown in your Polymarket profile.</p>
           </div>
-          <p data-wallet-help class="muted">Use the public wallet address shown in your Polymarket profile.</p>
           <button type="button" data-disconnect class="text-button">Disconnect</button>
         </div>
         <p class="muted" data-funding-help>Fund the wallet and manage any required approvals on <a href="https://polymarket.com/" target="_blank" rel="noopener noreferrer">Polymarket</a>.</p>
@@ -95,23 +121,36 @@ export function open(position, {sell = false, savedWallet = ""} = {}) {
       <button type="button" data-acknowledge class="secondary-button" hidden>I checked my Polymarket orders</button>
       <form class="order-form" hidden>
         <fieldset>
-          <div class="order-fields">
-            <div><label for="order-side">Action</label><select id="order-side">
-              <option value="BUY">Buy</option><option value="SELL">Sell</option>
-            </select></div>
-            <div><label for="order-outcome">Outcome</label><select id="order-outcome"></select></div>
-            <div><label for="order-price">Limit price (pUSD)</label><input id="order-price" type="text" inputmode="decimal" required autocomplete="off" placeholder="0.52"></div>
-            <div><label for="order-size">Shares</label><input id="order-size" type="text" inputmode="decimal" required autocomplete="off" placeholder="10"></div>
+          <div class="order-topline">
+            <div class="order-segment" role="group" aria-label="Trade side">
+              <button type="button" data-side="BUY" aria-pressed="true">Buy</button>
+              <button type="button" data-side="SELL" aria-pressed="false">Sell</button>
+            </div>
+            <div class="order-segment" role="group" aria-label="Order type">
+              <button type="button" data-type="market" aria-pressed="true">Market</button>
+              <button type="button" data-type="limit" aria-pressed="false">Limit</button>
+            </div>
           </div>
-          <p data-quote class="muted"></p>
-          <p data-balance class="muted"></p>
-          <button type="submit" class="secondary-button">Review limit order</button>
+          <div class="order-outcomes" role="group" aria-label="Outcome"></div>
+          <div class="order-fields">
+            <div data-price-field hidden><label for="order-price">Limit price (¢)</label>
+              <input id="order-price" type="text" inputmode="decimal" autocomplete="off" placeholder="52"></div>
+            <div><label for="order-size" data-size-label>Amount (pUSD)</label>
+              <input id="order-size" type="text" inputmode="decimal" required autocomplete="off" placeholder="0.00"></div>
+          </div>
+          <div data-presets class="order-presets" aria-label="Quick amounts" role="group"></div>
+          <div class="order-copy">
+            <p data-balance class="muted"></p>
+            <p data-quote class="muted" role="status"></p>
+            <p data-estimate></p>
+          </div>
+          <button type="submit" class="order-review-button">Review buy</button>
         </fieldset>
       </form>
       <section data-review class="order-review" aria-label="Review order" hidden>
         <strong data-review-line></strong>
         <p data-review-total></p>
-        <p class="muted">Good till canceled. Any unfilled shares can stay open. Fees may apply to fills.</p>
+        <p data-review-details class="muted"></p>
         <div class="order-inline">
           <button type="button" data-edit class="secondary-button">Edit</button>
           <button type="button" data-submit>Sign &amp; submit</button>
@@ -137,8 +176,12 @@ export function open(position, {sell = false, savedWallet = ""} = {}) {
   const funder = $("#order-funder");
   const form = $(".order-form");
   const fields = $("fieldset");
-  const side = $("#order-side");
-  const outcome = $("#order-outcome");
+  const outcomes = $(".order-outcomes");
+  const priceField = $("[data-price-field]");
+  const sizeLabel = $("[data-size-label]");
+  const presets = $("[data-presets]");
+  const estimate = $("[data-estimate]");
+  const reviewButton = form.querySelector("[type=submit]");
   const price = $("#order-price");
   const size = $("#order-size");
   const review = $("[data-review]");
@@ -157,6 +200,10 @@ export function open(position, {sell = false, savedWallet = ""} = {}) {
 
   let market;
   let book;
+  let cashOrShares;
+  let side = sell ? OrderSide.SELL : OrderSide.BUY;
+  let type = "market";
+  let outcomeIndex = 0;
   let session = connected?.session;
   let intent;
   let submitting = false;
@@ -167,16 +214,25 @@ export function open(position, {sell = false, savedWallet = ""} = {}) {
   const uncertain = () => uncertainOrders.has(orderKey(session));
   const unknownOrderMessage = "Order status is unknown. Check your orders and activity on Polymarket before submitting again.";
 
+  const isBuy = () => side === OrderSide.BUY;
+  const budgetMode = () => type === "market" && isBuy();
+
   function renderWallet() {
     connect.hidden = Boolean(connected);
     $("[data-account]").hidden = !connected;
-    $(".order-address").textContent = connected ? "MetaMask " + connected.address : "";
-    enable.hidden = funder.readOnly = Boolean(session);
-    $("[data-wallet-help]").hidden = Boolean(session);
+    const address = session?.wallet || connected?.address || "";
+    const identity = $(".order-address");
+    identity.textContent = (session ? "Trading wallet " : "MetaMask ") +
+      (address ? address.slice(0, 8) + "…" + address.slice(-6) : "");
+    identity.title = address;
+    $("[data-wallet-setup]").hidden = Boolean(session);
+    $("[data-funding-help]").hidden = Boolean(session);
+    funder.readOnly = Boolean(session) || enable.disabled;
     orders.hidden = !session || !market;
-    form.hidden = !market;
+    form.hidden = !market || Boolean(intent);
     acknowledge.hidden = !uncertain();
-    fields.disabled = !session || Boolean(intent) || submitting || uncertain();
+    fields.disabled = Boolean(intent) || submitting || uncertain();
+    updateEstimate();
     if (uncertain()) error.textContent = unknownOrderMessage;
   }
 
@@ -184,7 +240,7 @@ export function open(position, {sell = false, savedWallet = ""} = {}) {
     uncertainOrders.delete(orderKey(session));
     error.textContent = "";
     renderWallet();
-    price.focus();
+    size.focus();
   });
 
   function resetReview() {
@@ -193,32 +249,100 @@ export function open(position, {sell = false, savedWallet = ""} = {}) {
     renderWallet();
   }
 
+  function draftOrder() {
+    const selected = market.outcomes[outcomeIndex];
+    if (type === "market") return marketIntent(market, book, selected, side, size.value.trim());
+    return orderIntent(market, book, selected, side, decimal(fixed(price.value.trim(), 2) / 100n), size.value.trim());
+  }
+
+  function quoteSummary(draft) {
+    if (draft.type === "limit") return amount(draft.notional) + " pUSD at the limit, before fees";
+    const effective = isBuy() ? draft.gross + (draft.fee || 0n) : draft.gross - (draft.fee || 0n);
+    const cash = quoteNumber.format(Number(effective) / 1000000) + " pUSD" + (draft.fee === null ? " before fees" : "");
+    const shares = quoteNumber.format(Number(draft.shares) / 1000000) + " shares";
+    return isBuy() ? "Est. " + shares + " for " + cash : "Est. " + cash + " for " + shares;
+  }
+
+  function updateEstimate() {
+    reviewButton.textContent = isBuy() ? "Review buy" : "Review sell";
+    reviewButton.disabled = !session || !book || !size.value.trim() || (type === "limit" && !price.value.trim());
+    estimate.textContent = "";
+    if (!book || !size.value.trim()) return;
+    try {
+      const draft = draftOrder();
+      estimate.textContent = quoteSummary(draft) + (draft.partiallyQuoted ? " · Limited liquidity" : "");
+    } catch {
+      // Display actionable validation when the user requests a review.
+    }
+  }
+
+  function configureDraft() {
+    for (const button of form.querySelectorAll("[data-side]")) button.setAttribute("aria-pressed", button.dataset.side === side);
+    for (const button of form.querySelectorAll("[data-type]")) button.setAttribute("aria-pressed", button.dataset.type === type);
+    for (const [index, button] of [...outcomes.children].entries()) {
+      button.setAttribute("aria-pressed", index === outcomeIndex);
+      button.querySelector("strong").textContent = "—";
+    }
+    price.required = type === "limit";
+    priceField.hidden = !price.required;
+    sizeLabel.textContent = budgetMode() ? "Amount (pUSD)" : "Shares";
+    presets.replaceChildren();
+    if (budgetMode() || !isBuy()) {
+      const labels = budgetMode() ? ["$1", "$5", "$10", "$25"] : ["25%", "50%", "Max"];
+      for (const [index, label] of labels.entries()) {
+        const button = element("button", label, "secondary-button");
+        button.type = "button";
+        button.disabled = !isBuy() && cashOrShares == null;
+        button.addEventListener("click", () => {
+          if (budgetMode()) size.value = label.slice(1);
+          else size.value = decimal(cashOrShares * [25n, 50n, 100n][index] / 1000000n * 10000n);
+          updateEstimate();
+        });
+        presets.append(button);
+      }
+    }
+    updateEstimate();
+  }
+
   async function loadQuote() {
     if (!market) return;
-    const selected = market.outcomes[Number(outcome.value)];
     const request = ++quoteRequest;
     const wallet = session;
-    const action = side.value;
+    const chosen = outcomeIndex;
+    const action = side;
+    const buy = isBuy();
+    const selected = market.outcomes[chosen];
     book = null;
+    cashOrShares = null;
     quote.textContent = "Loading order book…";
     balance.textContent = "";
-    form.querySelector("[type=submit]").disabled = true;
+    configureDraft();
     if (wallet) balanceFor(wallet, action, selected).then((account) => {
-      if (request === quoteRequest) balance.textContent = action === OrderSide.BUY
-        ? amount(account.balance) + " pUSD in trading wallet" : amount(account.balance) + " shares in trading wallet";
+      if (request !== quoteRequest) return;
+      cashOrShares = account.balance;
+      balance.textContent = amount(cashOrShares) + (buy ? " pUSD in trading wallet" : " shares in trading wallet");
+      for (const button of presets.children) button.disabled = !buy && cashOrShares < 10000n;
     }).catch(() => {
       if (request === quoteRequest) balance.textContent = "Trading balance unavailable.";
     });
-    try {
-      const current = await bookFor(market, selected);
-      if (request !== quoteRequest) return;
-      book = current;
-      quote.textContent = "Bid " + priceText(book.bids, "bid") + " · Ask " + priceText(book.asks, "ask") +
-        " · Min. " + book.minOrderSize + " shares";
-      form.querySelector("[type=submit]").disabled = false;
-    } catch (failure) {
-      if (request === quoteRequest) quote.textContent = failureText(failure, "Order book unavailable. Reselect the outcome to retry.");
-    }
+    await Promise.all(market.outcomes.map(async (item, index) => {
+      try {
+        const current = await bookFor(market, item);
+        if (request !== quoteRequest) return;
+        const best = bestPrice(buy ? current.asks : current.bids, buy);
+        outcomes.children[index].querySelector("strong").textContent = cents(best);
+        if (index !== chosen) return;
+        book = current;
+        quote.textContent = "Bid " + cents(bestPrice(book.bids, false)) + " · Ask " + cents(bestPrice(book.asks, true)) +
+          (type === "limit" ? " · Min. " + book.minOrderSize + " shares" : "");
+        if (type === "limit" && !price.value && best != null) price.value = number.format(best * 100);
+        updateEstimate();
+      } catch (failure) {
+        if (request === quoteRequest && index === chosen) {
+          quote.textContent = failureText(failure, "Order book unavailable. Select the outcome to retry.");
+        }
+      }
+    }));
   }
 
   async function loadOrders() {
@@ -295,8 +419,8 @@ export function open(position, {sell = false, savedWallet = ""} = {}) {
       const address = await connectWallet(provider);
       if (!dialog.open) return;
       const connection = rememberConnection(provider, address);
-      const suggested = await funderFor(address);
-      if (connected !== connection) return;
+      const suggested = savedFunder(address) || await funderFor(address);
+      if (connected !== connection || !dialog.open) return;
       funder.value = suggested || (addressPattern.test(savedWallet) ? savedWallet : address);
       status.textContent = "Confirm your trading wallet, then enable trading.";
       renderWallet();
@@ -318,11 +442,13 @@ export function open(position, {sell = false, savedWallet = ""} = {}) {
       const wallet = await authenticate(connection.provider, connection.address, funder.value);
       if (connection !== connected || !dialog.open) return;
       session = connection.session = wallet;
+      rememberFunder(wallet);
       funder.value = wallet.wallet;
       status.textContent = "Trading enabled for this tab.";
       renderWallet();
       loadQuote();
       loadOrders();
+      if (!fields.disabled && !form.hidden) size.focus();
     } catch (failure) {
       error.textContent = failureText(failure, "Polymarket sign-in failed. Verify the profile wallet and try again.");
       status.textContent = "";
@@ -333,20 +459,40 @@ export function open(position, {sell = false, savedWallet = ""} = {}) {
   });
   $("[data-disconnect]").addEventListener("click", disconnect);
   refresh.addEventListener("click", () => loadOrders());
-  for (const control of [outcome, side]) control.addEventListener("change", () => {
+  function changeDraft() {
+    price.value = "";
+    error.textContent = "";
     resetReview();
     loadQuote();
+  }
+
+  for (const button of form.querySelectorAll("[data-side]")) button.addEventListener("click", () => {
+    if (side !== button.dataset.side) size.value = "";
+    side = button.dataset.side;
+    changeDraft();
   });
+  for (const button of form.querySelectorAll("[data-type]")) button.addEventListener("click", () => {
+    if (type !== button.dataset.type && isBuy()) size.value = "";
+    type = button.dataset.type;
+    changeDraft();
+  });
+  form.addEventListener("input", updateEstimate);
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     if (!session || !book || uncertain() || submitting) return;
     error.textContent = "";
     try {
-      const selected = market.outcomes[Number(outcome.value)];
-      intent = orderIntent(market, book, selected, side.value, price.value.trim(), size.value.trim());
-      $("[data-review-line]").textContent = (side.value === OrderSide.BUY ? "Buy " : "Sell ") +
-        intent.size + " " + selected.label + " shares at " + intent.price + " pUSD each";
-      $("[data-review-total]").textContent = amount(intent.notional) + " pUSD at the limit, before fees";
+      const selected = market.outcomes[outcomeIndex];
+      intent = draftOrder();
+      const label = isBuy() ? "Buy " : "Sell ";
+      $("[data-review-line]").textContent = intent.type === "market"
+        ? label + (isBuy() ? selected.label + " · " + intent.input + " pUSD budget" : intent.input + " " + selected.label + " shares")
+        : label + intent.size + " " + selected.label + " shares at " + displayBound(fixed(intent.price, 4));
+      $("[data-review-total]").textContent = quoteSummary(intent);
+      $("[data-review-details]").textContent = intent.type === "market" ?
+        (isBuy() ? "Max. " : "Min. ") + displayBound(intent.bound) +
+          " per share · unfilled amount cancels. " + (isBuy() ? "Fee reserve is estimated." : "") :
+        "Good till canceled. Unfilled shares can stay open. Fees may apply to fills.";
       review.hidden = false;
       renderWallet();
       submit.focus();
@@ -356,13 +502,14 @@ export function open(position, {sell = false, savedWallet = ""} = {}) {
   });
   $("[data-edit]").addEventListener("click", () => {
     resetReview();
-    price.focus();
+    loadQuote();
+    size.focus();
   });
   submit.addEventListener("click", async () => {
     if (!session || !intent || uncertain() || submitting) return;
     const approved = intent;
     const wallet = session;
-    const selected = market.outcomes[Number(outcome.value)];
+    const selected = market.outcomes[outcomeIndex];
     submitting = true;
     close.disabled = submit.disabled = $("[data-edit]").disabled = $("[data-disconnect]").disabled = true;
     receipt.hidden = true;
@@ -376,13 +523,12 @@ export function open(position, {sell = false, savedWallet = ""} = {}) {
       if (latest.conditionId !== market.conditionId || current?.label !== selected.label) {
         throw new TicketError("Market details changed. Reopen the ticket before submitting.");
       }
-      const checked = orderIntent(latest, await bookFor(latest, current), current, approved.side, approved.price, approved.size);
-      if (checked.exchange !== approved.exchange) throw new TicketError("The trading contract changed. Reopen this ticket.");
+      recheckOrder(latest, await bookFor(latest, current), current, approved);
       const funds = await balanceFor(wallet, approved.side, current);
-      const needed = approved.side === OrderSide.BUY ? approved.notional : approved.quantity;
+      const needed = approved.side === OrderSide.BUY ? (approved.budget ?? approved.notional) : approved.quantity;
       if (funds.balance < needed) throw new TicketError(approved.side === OrderSide.BUY
         ? "Insufficient pUSD in the trading wallet." : "Insufficient shares in the trading wallet.");
-      const allowance = Object.entries(funds.allowances).find(([address]) => address.toLowerCase() === checked.exchange)?.[1];
+      const allowance = Object.entries(funds.allowances).find(([address]) => address.toLowerCase() === approved.exchange)?.[1];
       if (allowance !== undefined && allowance < needed) {
         throw new TicketError("Trading allowance is insufficient. Set it up on Polymarket before submitting.");
       }
@@ -398,7 +544,8 @@ export function open(position, {sell = false, savedWallet = ""} = {}) {
         const reason = String(response.code || "").replace(/_/g, " ").toLowerCase();
         throw new TicketError("Polymarket rejected the order" + (reason ? " (" + reason + ")." : "."));
       }
-      const label = {live: "Open", matched: "Matched · settlement pending", delayed: "Accepted · matching delayed"};
+      const label = {live: "Open", matched: "Matched · settlement pending", delayed: "Accepted · matching delayed",
+        unmatched: "No match reported"};
       $("[data-receipt-line]").textContent = "Order accepted · " + (label[response.status] || response.status);
       $("[data-receipt-line]").title = response.orderId;
       $("[data-note]").onclick = () => DashboardWatchlist.openJournal(journalMarket, true, response.orderId);
@@ -424,7 +571,8 @@ export function open(position, {sell = false, savedWallet = ""} = {}) {
     }
   });
 
-  if (connected) funder.value = session?.wallet || (addressPattern.test(savedWallet) ? savedWallet : connected.address);
+  if (connected) funder.value = session?.wallet || savedFunder(connected.address) ||
+    (addressPattern.test(savedWallet) ? savedWallet : connected.address);
   renderWallet();
   document.querySelector("main").append(dialog);
   dialog.showModal();
@@ -436,14 +584,20 @@ export function open(position, {sell = false, savedWallet = ""} = {}) {
     market = result;
     $(".order-ticket-market").textContent = market.question || position.title;
     for (const [index, item] of market.outcomes.entries()) {
-      const option = element("option", item.label);
-      option.value = index;
-      outcome.append(option);
+      const button = element("button", undefined, "order-outcome");
+      button.type = "button";
+      button.dataset.direction = index === 0 ? "first" : "second";
+      button.append(element("span", item.label), element("strong", "—"));
+      button.addEventListener("click", () => {
+        outcomeIndex = index;
+        changeDraft();
+      });
+      outcomes.append(button);
     }
     const index = market.outcomes.findIndex((item) => item.tokenId === position.token_id || item.assetId === position.token_id ||
       (item.label || "").toLowerCase() === (position.outcome || "").toLowerCase());
-    if (index >= 0) outcome.value = index;
-    side.value = sell && index >= 0 ? OrderSide.SELL : OrderSide.BUY;
+    if (index >= 0) outcomeIndex = index;
+    side = sell && index >= 0 ? OrderSide.SELL : OrderSide.BUY;
     status.textContent = "";
     renderWallet();
     loadQuote();
