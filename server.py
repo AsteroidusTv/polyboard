@@ -53,7 +53,7 @@ TRADE_FIELDS = ("title", "icon", "side", "outcome", "price", "size", "timestamp"
 ACTIVITY_FIELDS = ("type", "side", "size", "price", "timestamp", "usdc_size", "transaction_hash")
 STATIC_LINK = re.compile(rb'((?:src|href)=")(/[a-z0-9.-]+\.(?:css|js|svg))"')
 CATALOG_FILTERS = ("q", "category", "exclude", "sort", "side", "band", "ends", "after", "before",
-                   "liquidity", "spread", "cursor", "event", "preview")
+                   "liquidity", "spread", "cursor", "event", "preview", "suggest")
 RESPONSES = ReadCache(256)
 WALLET_PNL = ReadCache(128)
 POSITION_SETTLEMENTS = ReadCache(192)

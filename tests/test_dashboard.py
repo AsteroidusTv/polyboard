@@ -162,8 +162,23 @@ class MarketCatalogTests(unittest.TestCase):
             matches = search("Candidate Alvarez")
             self.assertEqual([market["slug"] for market in matches[0]["markets"]], ["candidate-alvarez"])
             self.assertEqual(matches[0]["matching_market_count"], 1)
+            self.assertEqual(search("Candidate Alva"), matches)
             self.assertEqual(search("unrelated-candidate"), [])
             self.assertEqual(search("Presidential election")[0]["matching_market_count"], 2)
+
+    def test_search_suggestions_use_one_page_and_return_one_market_per_event(self):
+        market = {"slug": "rate-a", "question": "Rate A", "active": True, "acceptingOrders": True,
+                  "outcomes": ["Yes", "No"], "clobTokenIds": ["1", "2"], "outcomePrices": [0.4, 0.6]}
+        events = [{"slug": f"inflation-{index}", "title": f"Inflation {index}", "markets": [
+            market, {**market, "slug": "rate-b", "question": "Rate B"},
+        ]} for index in range(8)]
+        with patch.object(market_catalog, "search_event_page", return_value=(events, True)) as upstream:
+            preview = market_catalog.browse_markets({"q": ["Inflati"], "suggest": ["1"]})
+        self.assertIsNone(preview["next_cursor"])
+        self.assertEqual(len(preview["events"]), 6)
+        self.assertTrue(all(len(event["markets"]) == 1 for event in preview["events"]))
+        upstream.assert_called_once_with("Inflati", 1, status="active", keep_closed_markets=0,
+                                        limit_per_type=market_catalog.PAGE_SIZE)
 
 
 class ReviewTests(unittest.TestCase):

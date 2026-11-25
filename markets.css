@@ -1,4 +1,4 @@
-.market-toolbar { display: flex; align-items: stretch; gap: 8px; }
+.market-toolbar { position: relative; display: flex; align-items: stretch; gap: 8px; }
 #catalog-search { display: flex; flex: 1; flex-wrap: nowrap; align-items: stretch; max-width: none; min-width: 0; gap: 8px; }
 .market-browser :is(input[type="search"], input[type="date"], select) {
   min-width: 0;
@@ -11,6 +11,60 @@
   font: inherit;
 }
 #catalog-query { flex: 1; width: 0; padding-inline: 12px; }
+.market-suggestions {
+  position: absolute;
+  z-index: 3;
+  top: calc(100% + 6px);
+  inset-inline-start: 0;
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 540px);
+  max-height: min(400px, 55dvh);
+  border: 1px solid #384665;
+  border-radius: 12px;
+  padding: 5px;
+  background: var(--surface);
+  box-shadow: 0 12px 28px #070a12b3;
+}
+#catalog-suggestion-status { padding: 12px; font-size: .82rem; }
+.market-suggestion-list { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.market-suggestion-list:empty { display: none; }
+.market-suggestion-list .market-suggestion {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 48px;
+  height: auto;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  text-align: start;
+  font-size: .87rem;
+}
+.market-suggestion:is(:hover, [aria-selected="true"]) { background: #232e46; }
+.market-suggestion:active { transform: none; }
+.market-suggestion img { width: 32px; height: 32px; border-radius: 6px; object-fit: cover; background: #222c3e; }
+.market-suggestion-text { flex: 1; min-width: 0; }
+.market-suggestion-text > :is(strong, small) { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.market-suggestion small { margin-top: 2px; color: var(--muted); font-size: .72rem; font-weight: 500; }
+.market-suggestion-price { flex: none; text-align: end; font-variant-numeric: tabular-nums; }
+.market-suggestion-price small { display: block; max-width: 14ch; overflow-wrap: anywhere; }
+.market-suggestions .market-suggestion-all {
+  flex: none;
+  min-height: 38px;
+  height: auto;
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 9px;
+  background: transparent;
+  color: #c7d4ff;
+  text-align: start;
+  font-size: .84rem;
+}
+.market-suggestion-all:hover { background: #232e46; }
 #catalog-filters { min-width: 82px; }
 #catalog-filters.has-active-filters { border-color: #586b9e; background: #252e49; color: #d9e2ff; }
 .market-categories {

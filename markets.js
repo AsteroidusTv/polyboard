@@ -13,7 +13,11 @@
   const filterCookie = "polymarket_market_filters";
   const fields = Object.fromEntries(filterNames.map((name) => [name, byId("catalog-" + name)]));
   const sort = byId("catalog-sort");
+  const searchForm = byId("catalog-search");
   const input = byId("catalog-query");
+  const suggestions = byId("catalog-suggestions");
+  const suggestionList = byId("catalog-suggestion-list");
+  const suggestionStatus = byId("catalog-suggestion-status");
   const filtersDialog = byId("catalog-filter-dialog");
   const eventDialog = byId("catalog-event-dialog");
   const eventViewport = eventDialog.querySelector(".market-dialog-scroll");
@@ -67,6 +71,8 @@
   let eventCursorTime;
   let catalogLocation;
   let restoreRequest;
+  let suggestionTimer;
+  let suggestionRequest;
   let sparsePages = 0;
   const renderedCards = new Map();
   const seenCursors = new Set();
@@ -190,6 +196,7 @@
   }
 
   function navigate(next) {
+    closeSuggestions();
     restoreRequest?.abort();
     state = next;
     updateLocation(next);
@@ -306,6 +313,76 @@
 
   function priceLabel(value) {
     return Number.isFinite(value) ? percent.format(value) : "—";
+  }
+
+  function closeSuggestions() {
+    clearTimeout(suggestionTimer);
+    suggestionTimer = undefined;
+    suggestionRequest?.abort();
+    suggestionRequest = undefined;
+    suggestions.hidden = true;
+    suggestionList.replaceChildren();
+    input.setAttribute("aria-expanded", "false");
+    input.removeAttribute("aria-activedescendant");
+  }
+
+  function showSuggestionStatus(message) {
+    suggestionStatus.textContent = message;
+    suggestionStatus.hidden = !message;
+  }
+
+  function suggestionRow(event, index) {
+    const market = event.markets[0];
+    const row = button(undefined, "market-suggestion", () => {
+      closeSuggestions();
+      showMarket(market, event);
+    });
+    row.id = "catalog-suggestion-" + index;
+    row.tabIndex = -1;
+    row.setAttribute("role", "option");
+    row.setAttribute("aria-selected", "false");
+    const image = imageFor({image: market.image || event.image});
+    if (image) row.append(image);
+    const text = node("span", undefined, "market-suggestion-text");
+    text.append(node("strong", event.title));
+    if (market.label !== event.title) text.append(node("small", market.label));
+    const quote = market.outcomes[0];
+    const price = node("span", undefined, "market-suggestion-price");
+    price.append(node("strong", priceLabel(quote.price)), node("small", quote.label));
+    row.append(text, price);
+    return row;
+  }
+
+  async function loadSuggestions(q) {
+    suggestionTimer = undefined;
+    const controller = new AbortController();
+    suggestionRequest = controller;
+    const params = catalogParameters({...state, q, sort: "auto", category: "trending"});
+    params.set("suggest", "1");
+    showSuggestionStatus("Searching markets…");
+    suggestions.hidden = false;
+    input.setAttribute("aria-expanded", "true");
+    try {
+      const response = await fetch("/api/markets?" + params, {
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(8000)])
+      });
+      if (!response.ok) throw new Error("Suggestions unavailable");
+      const {events} = await response.json();
+      if (suggestionRequest !== controller) return;
+      suggestionList.replaceChildren(...events.map(suggestionRow));
+      showSuggestionStatus(events.length ? "" : "No matches in the preview.");
+    } catch {
+      if (suggestionRequest === controller) showSuggestionStatus("Preview unavailable. You can still search.");
+    } finally {
+      if (suggestionRequest === controller) suggestionRequest = undefined;
+    }
+  }
+
+  function queueSuggestions() {
+    closeSuggestions();
+    const q = input.value.trim();
+    if (q.length < 3 || q === state.q || /^(?:https?:\/\/|(?:www\.)?polymarket\.com\/)/i.test(q)) return;
+    suggestionTimer = setTimeout(() => loadSuggestions(q), 250);
   }
 
   function shortOutcome(label) {
@@ -673,13 +750,13 @@
     }
   }
 
-  function catalogParameters() {
-    const params = parameters(state);
+  function catalogParameters(current = state) {
+    const params = parameters(current);
     params.delete("from");
     params.delete("through");
-    if (state.ends === "custom") {
-      if (state.from) params.set("after", midnight(state.from));
-      if (state.through) params.set("before", midnight(state.through, true));
+    if (current.ends === "custom") {
+      if (current.from) params.set("after", midnight(current.from));
+      if (current.through) params.set("before", midnight(current.through, true));
     }
     return params;
   }
@@ -764,7 +841,7 @@
     }
   }
 
-  byId("catalog-search").addEventListener("submit", (event) => {
+  searchForm.addEventListener("submit", (event) => {
     event.preventDefault();
     const q = input.value.trim();
     if (q.length > 0 && q.length < 3) {
@@ -774,9 +851,42 @@
     }
     navigate({...state, q, sort: "auto", category: "trending"});
   });
-  input.addEventListener("input", () => {
+  input.addEventListener("input", (event) => {
     input.setCustomValidity("");
     if (!input.value && state.q) navigate({...state, q: "", sort: "auto"});
+    else if (!event.isComposing) queueSuggestions();
+    else closeSuggestions();
+  });
+  input.addEventListener("compositionend", queueSuggestions);
+  input.addEventListener("focus", queueSuggestions);
+  searchForm.addEventListener("keydown", (event) => {
+    if (event.isComposing) return;
+    if (event.key === "Escape" && (!suggestions.hidden || suggestionTimer)) {
+      event.preventDefault();
+      input.focus();
+      closeSuggestions();
+      return;
+    }
+    if (event.target !== input || suggestions.hidden) return;
+    const selected = byId(input.getAttribute("aria-activedescendant"));
+    if (event.key === "Enter" && selected) {
+      event.preventDefault();
+      selected.click();
+    } else if (["ArrowDown", "ArrowUp"].includes(event.key) && suggestionList.childElementCount) {
+      const next = event.key === "ArrowDown" ? selected?.nextElementSibling || suggestionList.firstElementChild
+        : selected?.previousElementSibling || suggestionList.lastElementChild;
+      event.preventDefault();
+      selected?.setAttribute("aria-selected", "false");
+      next.setAttribute("aria-selected", "true");
+      input.setAttribute("aria-activedescendant", next.id);
+      next.scrollIntoView({block: "nearest"});
+    }
+  });
+  searchForm.addEventListener("focusout", (event) => {
+    if (!searchForm.contains(event.relatedTarget)) closeSuggestions();
+  });
+  document.addEventListener("pointerdown", (event) => {
+    if (!searchForm.contains(event.target)) closeSuggestions();
   });
   sort.addEventListener("change", () => navigate({...state, sort: sort.value}));
   byId("catalog-filters").addEventListener("click", () => {
@@ -843,6 +953,7 @@
   DashboardWidgets.slidingSelection(eventRangeControls);
   new ResizeObserver(drawEventHistory).observe(eventCanvas);
   function restore() {
+    closeSuggestions();
     if (location.hash.startsWith("#watchlist") || pane.hidden) return;
     restoreRequest?.abort();
     const params = new URLSearchParams(location.search);

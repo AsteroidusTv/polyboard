@@ -42,8 +42,14 @@
       <div class="market-toolbar">
         <form id="catalog-search" role="search">
           <label class="sr-only" for="catalog-query">Search Polymarket</label>
-          <input id="catalog-query" type="search" placeholder="Title or Polymarket link" maxlength="700">
+          <input id="catalog-query" type="search" placeholder="Title or Polymarket link" maxlength="700"
+            autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="catalog-suggestion-list">
           <button type="submit">Search</button>
+          <div id="catalog-suggestions" class="market-suggestions" hidden>
+            <p id="catalog-suggestion-status" class="muted" role="status" hidden></p>
+            <div id="catalog-suggestion-list" class="market-suggestion-list" role="listbox" aria-label="Matching markets"></div>
+            <button type="submit" class="market-suggestion-all">See all results <span aria-hidden="true">→</span></button>
+          </div>
         </form>
         <button id="catalog-filters" class="secondary-button" type="button" aria-haspopup="dialog" aria-controls="catalog-filter-dialog">Filters</button>
       </div>
