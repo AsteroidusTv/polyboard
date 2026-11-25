@@ -302,7 +302,7 @@ const DashboardWatchlist = (() => {
     return /^\d{1,78}$/.test(token || "") ? "token:" + token : "";
   }
 
-  function openJournal(market, fromPosition = false) {
+  function openJournal(market, fromPosition = false, orderId) {
     const slug = journalKey(market);
     if (!slug) return;
     const journal = dialog("trade-journal", "Trade journal");
@@ -337,6 +337,12 @@ const DashboardWatchlist = (() => {
     };
     const setPlaceholder = () => { note.placeholder = placeholders[type.value]; };
     type.value = fromPosition ? "trade" : "update";
+    if (orderId) {
+      type.disabled = true;
+      const order = el("p", "Order " + orderId.slice(0, 10) + "…" + orderId.slice(-6), "muted");
+      order.title = orderId;
+      form.prepend(order);
+    }
     type.addEventListener("change", setPlaceholder);
     setPlaceholder();
     const requestController = new AbortController();
@@ -351,6 +357,11 @@ const DashboardWatchlist = (() => {
         const stamp = el("time", time.format(date), "muted");
         stamp.dateTime = date.toISOString();
         heading.append(el("strong", labels[entry.kind]), stamp);
+        if (entry.order_id) {
+          const order = el("span", "Order " + entry.order_id.slice(0, 10) + "…" + entry.order_id.slice(-6), "muted");
+          order.title = entry.order_id;
+          heading.append(order);
+        }
         row.append(heading, el("p", entry.body));
         return row;
       }));
@@ -368,13 +379,17 @@ const DashboardWatchlist = (() => {
         return;
       }
       if (draft?.body !== text || draft.kind !== type.value) {
-        draft = {action: "journal", slug, kind: type.value, body: text, note_id: crypto.randomUUID()};
+        draft = {action: "journal", slug, kind: type.value, body: text, note_id: crypto.randomUUID(), order_id: orderId};
       }
       const current = ++revision;
       perform(save, async () => {
         const saved = draft;
         const data = await change(saved, (result) => result);
         if (!journal.open || revision !== current) return;
+        if (orderId) {
+          journal.close();
+          return;
+        }
         render(data);
         if (note.value.trim() === saved.body && type.value === saved.kind) {
           note.value = "";
@@ -388,7 +403,7 @@ const DashboardWatchlist = (() => {
     request(undefined, AbortSignal.any([requestController.signal, AbortSignal.timeout(15000)]),
       "?" + new URLSearchParams({journal: slug})).then((data) => {
       if (!journal.open || revision) return;
-      if (fromPosition && data.entries.some(({kind}) => kind === "trade") && !note.value) {
+      if (fromPosition && !orderId && data.entries.some(({kind}) => kind === "trade") && !note.value) {
         type.value = "update";
         setPlaceholder();
       }

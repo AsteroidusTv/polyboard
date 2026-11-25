@@ -882,6 +882,7 @@ const DashboardWidgets = (() => {
           <div><dt id="activity-pnl-label">Unrealized P&amp;L</dt><dd id="activity-pnl">—</dd></div>
         </dl>
         <div class="activity-actions">
+          <button type="button" id="activity-trade" aria-haspopup="dialog" hidden>Trade</button>
           <button type="button" class="secondary-button" id="activity-follow" hidden>Follow</button>
           <button type="button" class="secondary-button" id="activity-alert" hidden>Add alert</button>
           <button type="button" class="text-button" id="activity-journal" aria-haspopup="dialog" hidden>Trade journal</button>
@@ -994,6 +995,22 @@ const DashboardWidgets = (() => {
     const closed = market?.settled || ["won", "lost", "settled"].includes(position.status);
     DashboardWatchlist.mountActions(dialog.querySelector("#activity-follow"), dialog.querySelector("#activity-alert"),
       dialog.querySelector("#activity-watch-error"), {...position, ...preview, state: preview?.state || (closed ? "closed" : undefined)});
+    const trade = dialog.querySelector("#activity-trade");
+    trade.hidden = !/^[a-z0-9][a-z0-9-]{0,250}$/.test(position.slug || "") || position.is_combo ||
+      closed || ["closed", "paused", "unavailable"].includes(preview?.state);
+    trade.onclick = async () => {
+      const current = trade.onclick;
+      trade.disabled = true;
+      try {
+        const ticket = await import("/order-ticket.js");
+        if (!dialog.open || trade.onclick !== current) return;
+        ticket.open(position, {sell: !preview && position.status === "open", savedWallet: DashboardSettings.wallet});
+      } catch {
+        if (trade.onclick === current) dialog.querySelector("#activity-watch-error").textContent = "The order ticket couldn’t load. Try again.";
+      } finally {
+        trade.disabled = false;
+      }
+    };
     const journal = dialog.querySelector("#activity-journal");
     journal.hidden = !DashboardWatchlist.journalKey(position);
     journal.onclick = () => DashboardWatchlist.openJournal(position, !preview);

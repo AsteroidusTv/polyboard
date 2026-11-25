@@ -46,6 +46,8 @@ FILES = {
     "/risk-check.js": ("risk-check.js", "text/javascript"),
     "/position-contributions.js": ("position-contributions.js", "text/javascript"),
     "/charts.js": ("charts.js", "text/javascript"),
+    "/order-ticket.js": ("order-ticket.js", "text/javascript"),
+    "/order-ticket-licenses.txt": ("trading/THIRD_PARTY_LICENSES.txt", "text/plain"),
     "/dashboard-widgets.js": ("dashboard-widgets.js", "text/javascript"),
     "/dashboard-settings.js": ("dashboard-settings.js", "text/javascript"),
 }
@@ -316,9 +318,10 @@ class Dashboard(BaseHTTPRequestHandler):
             self.send_header(name, value)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("Content-Security-Policy",
-                         "default-src 'self'; img-src 'self' https:; "
-                         "base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
+        policy = "default-src 'self'; img-src 'self' https:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+        if mime == "text/html":
+            policy += "; connect-src 'self' https://clob.polymarket.com https://gamma-api.polymarket.com https://polymarket.com"
+        self.send_header("Content-Security-Policy", policy)
         self.end_headers()
         if self.command != "HEAD" and status != 304:
             self.wfile.write(body)

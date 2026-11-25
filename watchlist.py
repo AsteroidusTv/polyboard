@@ -27,6 +27,7 @@ KEY = re.compile(r"[A-Za-z0-9_-]+={0,2}")
 COOKIE = "polymarket_watchlist"
 NOTE_ID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")
 NOTE_KINDS = ("follow", "trade", "update")
+ORDER_ID = re.compile(r"0x[0-9a-fA-F]{64}")
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS watches (
     session TEXT NOT NULL, slug TEXT NOT NULL, market TEXT NOT NULL, quotes TEXT NOT NULL,
@@ -46,7 +47,7 @@ CREATE TABLE IF NOT EXISTS notices (
 CREATE INDEX IF NOT EXISTS notices_by_browser ON notices(session, id DESC);
 CREATE TABLE IF NOT EXISTS journal (
     session TEXT NOT NULL, note_id TEXT NOT NULL, market TEXT NOT NULL,
-    kind TEXT NOT NULL, body TEXT NOT NULL, created INTEGER NOT NULL,
+    kind TEXT NOT NULL, body TEXT NOT NULL, created INTEGER NOT NULL, order_id TEXT,
     PRIMARY KEY (session, note_id)
 );
 CREATE INDEX IF NOT EXISTS journal_by_market ON journal(session, market, created);
@@ -80,7 +81,10 @@ def parse_note(data, kind=None):
         raise RequestError("Invalid journal note.")
     if not isinstance(body, str) or not 1 <= len(body.strip()) <= 1000:
         raise RequestError("Write a note of 1 to 1,000 characters.")
-    return note_id, kind, body.strip()
+    order_id = data.get("order_id")
+    if order_id is not None and (kind != "trade" or not isinstance(order_id, str) or not ORDER_ID.fullmatch(order_id)):
+        raise RequestError("Invalid trade order reference.")
+    return note_id, kind, body.strip(), order_id
 
 
 def midpoint_prices(tokens):
@@ -190,6 +194,9 @@ class Watchlist:
         with self.connect() as db:
             db.execute("PRAGMA journal_mode = WAL")
             db.executescript(SCHEMA)
+            db.execute("BEGIN IMMEDIATE")
+            if "order_id" not in {row["name"] for row in db.execute("PRAGMA table_info(journal)")}:
+                db.execute("ALTER TABLE journal ADD COLUMN order_id TEXT")
 
     @contextmanager
     def connect(self):
@@ -256,7 +263,7 @@ class Watchlist:
 
     @staticmethod
     def journal_entries(db, session, market):
-        rows = db.execute("SELECT kind, body, created FROM journal WHERE session = ? AND market = ? "
+        rows = db.execute("SELECT kind, body, created, order_id FROM journal WHERE session = ? AND market = ? "
                           "ORDER BY created, rowid", (session, market))
         return {"entries": [dict(row) for row in rows]}
 
@@ -266,13 +273,13 @@ class Watchlist:
 
     @staticmethod
     def add_note(db, session, market, note):
-        note_id, kind, body = note
+        note_id, kind, body, order_id = note
         if db.execute("SELECT 1 FROM journal WHERE session = ? AND note_id = ?", (session, note_id)).fetchone():
             return
         if db.execute("SELECT count(*) FROM journal WHERE session = ?", (session,)).fetchone()[0] >= 2000:
             raise WatchError("This browser’s trade journal is full.")
-        db.execute("INSERT INTO journal VALUES (?, ?, ?, ?, ?, ?)",
-                   (session, note_id, market, kind, body, int(time())))
+        db.execute("INSERT INTO journal (session, note_id, market, kind, body, created, order_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                   (session, note_id, market, kind, body, int(time()), order_id))
 
     def mutate(self, session, data):
         action = data.get("action")

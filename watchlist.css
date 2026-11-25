@@ -165,3 +165,41 @@
 .resolution-wording { max-height: 13rem; overflow: auto; margin-top: 5px; padding: 9px; border: 1px solid var(--border); border-radius: 7px; }
 .resolution-analysis { margin: 9px 0 13px; }
 .resolution-analysis > button { margin-bottom: 6px; }
+
+.order-ticket { width: min(590px, calc(100% - 24px)); }
+.order-ticket-market, .order-address { overflow-wrap: anywhere; }
+.order-ticket .watch-dialog-body { display: grid; gap: 12px; }
+.order-ticket [role="status"]:empty, .order-ticket [data-balance]:empty { display: none; }
+.order-wallet { display: grid; gap: 7px; }
+.order-wallet a { color: #c6d1ff; }
+.order-wallet label { margin-top: 6px; }
+.order-wallet .text-button { min-height: 32px; height: auto; }
+.order-inline { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.order-inline #order-funder { flex: 1 1 225px; min-width: 0; }
+.order-ticket :is(input, select) {
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #101620;
+  color: inherit;
+  padding: 0 8px;
+  font: inherit;
+}
+.order-form, .order-form fieldset { display: block; max-width: none; width: 100%; min-width: 0; }
+.order-form fieldset { border: 0; margin: 0; padding: 0; }
+.order-form fieldset:disabled { opacity: .65; }
+.order-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 6px; }
+.order-form fieldset > button { margin-top: 8px; }
+.order-review { display: grid; gap: 5px; padding: 10px; border: 1px solid #384665; border-radius: 9px; background: #151b2b; }
+.order-review button { justify-self: start; }
+.order-open { margin-top: 0; border-top: 1px solid var(--border); }
+.order-open-heading { justify-content: space-between; }
+.order-open h3 { font-size: 1rem; }
+.order-open ul { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.order-open li { display: flex; justify-content: space-between; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); padding: 4px 0; }
+.order-open small { display: block; }
+@media (max-width: 510px) {
+  .order-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

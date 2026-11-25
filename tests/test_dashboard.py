@@ -1,3 +1,4 @@
+import sqlite3
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -139,6 +140,24 @@ class WatchlistTests(unittest.TestCase):
                 ("follow", "Wait for the official ruling."), ("update", "Thesis still holds.")])
             self.assertEqual(reopened.read_journal("other-browser", "market")["entries"], [])
             self.assertEqual(reopened.read("browser")["watches"], [])
+
+    def test_order_note_migrates_the_existing_market_journal(self):
+        with TemporaryDirectory() as folder:
+            path = Path(folder) / "watchlist.sqlite3"
+            with sqlite3.connect(path) as db:
+                db.execute("CREATE TABLE journal (session TEXT, note_id TEXT, market TEXT, kind TEXT, body TEXT, "
+                           "created INTEGER, PRIMARY KEY (session, note_id))")
+                db.execute("INSERT INTO journal VALUES (?, ?, ?, ?, ?, ?)",
+                           ("browser", "original", "market", "follow", "Original reason", 1))
+            store = watchlist.Watchlist(Path(folder))
+            order_id = "0x" + "f" * 64
+            data = {"action": "journal", "slug": "market", "kind": "trade", "body": "New reason", "order_id": order_id,
+                    "note_id": "40dd2db9-358e-49f7-92f0-8b58d6780cc1"}
+            with self.assertRaises(watchlist.RequestError):
+                store.mutate("browser", {**data, "kind": "update"})
+            entries = store.mutate("browser", data)["entries"]
+            self.assertEqual([(note["body"], note["order_id"]) for note in entries],
+                             [("Original reason", None), ("New reason", order_id)])
 
     def test_stale_quote_and_market_closure_keep_follow_without_firing(self):
         market = {"slug": "market", "title": "Market", "state": "open", "outcomes": [

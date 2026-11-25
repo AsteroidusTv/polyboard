@@ -15,3 +15,6 @@ jobs:
           node-version: '22'
       - run: python -m unittest discover -s tests
       - run: for file in *.js; do node --check "$file" || exit; done
+      - run: npm ci --prefix trading --ignore-scripts
+      - run: node --test trading/test-client.js
+      - run: npm run --prefix trading build && git diff --exit-code -- order-ticket.js
