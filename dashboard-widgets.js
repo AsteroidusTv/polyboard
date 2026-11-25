@@ -896,17 +896,20 @@ const DashboardWidgets = (() => {
           <p id="activity-watch-error" class="negative" role="alert"></p>
         </div>
       </header>
-      <div class="activity-body" id="activity-body">
-        <div id="activity-chart" class="market-chart"></div>
-        <div id="activity-transactions">
-          <h3 id="transactions-heading">Transactions</h3>
-          <table id="activity-table" aria-labelledby="transactions-heading" hidden>
-            <thead><tr><th scope="col">Date</th><th scope="col">Type</th><th scope="col">Shares</th><th scope="col">Price</th><th scope="col">Amount</th></tr></thead>
-            <tbody></tbody>
-          </table>
-          <p id="activity-empty" class="muted" role="status" hidden></p>
-          <p id="activity-source" class="muted" hidden>P&amp;L reported by Polymarket.</p>
+      <div class="activity-workspace">
+        <div class="activity-body" id="activity-body">
+          <div id="activity-chart" class="market-chart"></div>
+          <div id="activity-transactions">
+            <h3 id="transactions-heading">Transactions</h3>
+            <table id="activity-table" aria-labelledby="transactions-heading" hidden>
+              <thead><tr><th scope="col">Date</th><th scope="col">Type</th><th scope="col">Shares</th><th scope="col">Price</th><th scope="col">Amount</th></tr></thead>
+              <tbody></tbody>
+            </table>
+            <p id="activity-empty" class="muted" role="status" hidden></p>
+            <p id="activity-source" class="muted" hidden>P&amp;L reported by Polymarket.</p>
+          </div>
         </div>
+        <div class="activity-order" id="activity-order" hidden></div>
       </div>`;
     const table = dialog.querySelector("#activity-table");
     const panel = chartPanel(dialog.querySelector("#activity-chart"), true, (index, scrollToRow) => {
@@ -940,10 +943,15 @@ const DashboardWidgets = (() => {
       // Restoring an event and a market together can group their native close requests.
       event.preventDefault();
       if (tools.matches(":popover-open")) closeTools();
+      else if (detail.ticket) detail.ticket.close();
       else dialog.close();
+    });
+    dialog.querySelector(".activity-header form").addEventListener("submit", (event) => {
+      if (detail.ticket?.busy) event.preventDefault();
     });
     dialog.addEventListener("close", () => {
       if (dialog.open) return;
+      detail.ticket?.close();
       tools.hidePopover();
       detailRequest?.abort();
       detail.onClose?.();
@@ -1013,12 +1021,33 @@ const DashboardWidgets = (() => {
     trade.hidden = !/^[a-z0-9][a-z0-9-]{0,250}$/.test(position.slug || "") || position.is_combo ||
       closed || ["closed", "paused", "unavailable"].includes(preview?.state);
     trade.onclick = async () => {
+      if (detail.ticket) {
+        detail.ticket.close();
+        return;
+      }
       const current = trade.onclick;
       trade.disabled = true;
       try {
         const ticket = await import("/order-ticket.js");
         if (!dialog.open || trade.onclick !== current) return;
-        ticket.open(position, {sell: !preview && position.status === "open", savedWallet: DashboardSettings.wallet});
+        detail.ticket = ticket.open(position, {
+          sell: !preview && position.status === "open",
+          savedWallet: DashboardSettings.wallet,
+          dock: dialog.querySelector("#activity-order"),
+          parent: dialog,
+          onClose() {
+            detail.ticket = undefined;
+            trade.textContent = "Trade";
+            trade.removeAttribute("aria-expanded");
+            trade.removeAttribute("aria-controls");
+            if (dialog.open && !trade.hidden) trade.focus({preventScroll: true});
+          }
+        });
+        if (detail.ticket) {
+          trade.textContent = "Hide trade";
+          trade.setAttribute("aria-expanded", "true");
+          trade.setAttribute("aria-controls", "activity-order");
+        }
       } catch {
         if (trade.onclick === current) dialog.querySelector("#activity-watch-error").textContent = "The order ticket couldn’t load. Try again.";
       } finally {
@@ -1112,6 +1141,7 @@ const DashboardWidgets = (() => {
 
   async function openPosition(position, wallet, {summary, fill, preview} = {}) {
     detail ||= positionDialog();
+    if (detail.ticket && !detail.ticket.close()) return;
     detailRequest?.abort();
     const request = new AbortController();
     detailRequest = request;

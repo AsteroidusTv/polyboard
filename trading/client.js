@@ -238,6 +238,20 @@ export function marketIntent(market, book, outcome, side, input) {
     budget: buy ? total : null, quantity: buy ? null : total};
 }
 
+export function orderPreview(intent) {
+  const buy = intent.side === OrderSide.BUY;
+  const market = intent.type === "market";
+  const shares = market ? intent.shares : intent.quantity;
+  const gross = market ? intent.gross : intent.notional;
+  const fee = market ? intent.fee : null;
+  const cash = buy ? gross + (fee ?? 0n) : gross - (fee ?? 0n);
+  return {
+    cash, shares, fee, payoff: buy ? shares : cash,
+    average: gross * unit / shares,
+    profitIfWin: buy ? shares - cash : null,
+  };
+}
+
 export function recheckOrder(market, book, outcome, intent) {
   const checked = intent.type === "market" ? orderIdentity(market, book, outcome, intent.side) :
     orderIntent(market, book, outcome, intent.side, intent.price, intent.size);

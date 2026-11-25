@@ -1,11 +1,16 @@
 import {
   addressPattern, authenticate, balanceFor, bookFor, cancelOrder, connectWallet, decimal, fixed, funderFor, marketFor, marketIntent,
-  openOrders, orderIdPattern, orderIntent, OrderSide, placeOrder, recheckOrder, TicketError, verifyEligibility
+  openOrders, orderIdPattern, orderIntent, orderPreview, OrderSide, placeOrder, recheckOrder, TicketError, verifyEligibility
 } from "./client.js";
 
 const slugPattern = /^[a-z0-9][a-z0-9-]{0,250}$/;
 const number = new Intl.NumberFormat("en-US", {maximumFractionDigits: 6});
 const quoteNumber = new Intl.NumberFormat("en-US", {maximumFractionDigits: 4});
+const cashFormat = new Intl.NumberFormat("en-US", {
+  style: "currency", currency: "USD", maximumFractionDigits: 2
+});
+const cashText = (units) => units > 0n && units < 5000n ? "<$0.01" : cashFormat.format(Number(units) / 1000000);
+const centFormat = new Intl.NumberFormat("en-US", {maximumFractionDigits: 2});
 const amount = (units) => number.format(Number(units) / 1000000);
 const discovered = new Set();
 const walletEvents = new EventTarget();
@@ -85,18 +90,33 @@ function bestPrice(levels, buy) {
   return (buy ? Math.min : Math.max)(...levels.map((level) => Number(level.price)));
 }
 
-const cents = (price) => price == null ? "—" : number.format(price * 100) + "¢";
+const cents = (price) => price == null ? "—" : centFormat.format(price * 100) + "¢";
 const displayBound = (units) => cents(Number(units) / 1000000);
 
-export function open(position, {sell = false, savedWallet = ""} = {}) {
+const payoffMarkup = `
+  <div class="order-payoff">
+    <div><strong data-payoff-label>To win</strong><p data-payoff-condition class="muted"></p></div>
+    <output data-payoff-value aria-label="Estimated outcome">—</output>
+  </div>
+  <dl class="order-statistics">
+    <div><dt>Avg. price</dt><dd data-avg-price>—</dd></div>
+    <div><dt>Estimated shares</dt><dd data-shares>—</dd></div>
+    <div data-cost-stat><dt>Cost</dt><dd data-cost>—</dd></div>
+    <div data-profit-stat><dt>Profit if it wins</dt><dd data-profit>—</dd></div>
+    <div data-fee-stat hidden><dt>Est. fees</dt><dd data-fee>—</dd></div>
+  </dl>`;
+
+export function open(position, {sell = false, savedWallet = "", dock, parent, onClose} = {}) {
   if (active || !slugPattern.test(position.slug || "")) return;
   const journalMarket = {slug: position.slug, title: position.title};
-  const dialog = element("dialog", undefined, "watch-dialog order-ticket");
+  const docked = Boolean(dock && parent && matchMedia("(min-width: 920px)").matches);
+  const dialog = element(docked ? "section" : "dialog", undefined, "watch-dialog order-ticket");
   active = dialog;
+  const isOpen = () => active === dialog && (docked ? parent.open : dialog.open);
   dialog.setAttribute("aria-labelledby", "order-ticket-heading");
   dialog.innerHTML = `
     <header class="watch-dialog-head">
-      <div><h2 id="order-ticket-heading">Trade on Polymarket</h2><p class="muted order-ticket-market"></p></div>
+      <div><h2 id="order-ticket-heading">Trade on Polymarket</h2><p class="muted order-ticket-market"${docked ? " hidden" : ""}></p></div>
       <button type="button" data-close class="text-button activity-dismiss" aria-label="Close order ticket" autofocus>×</button>
     </header>
     <div class="watch-dialog-body">
@@ -142,14 +162,14 @@ export function open(position, {sell = false, savedWallet = ""} = {}) {
           <div class="order-copy">
             <p data-balance class="muted"></p>
             <p data-quote class="muted" role="status"></p>
-            <p data-estimate></p>
           </div>
+          <div data-draft-payoff class="order-estimate">${payoffMarkup}</div>
           <button type="submit" class="order-review-button">Review buy</button>
         </fieldset>
       </form>
       <section data-review class="order-review" aria-label="Review order" hidden>
         <strong data-review-line></strong>
-        <p data-review-total></p>
+        <div data-review-payoff class="order-estimate">${payoffMarkup}</div>
         <p data-review-details class="muted"></p>
         <div class="order-inline">
           <button type="button" data-edit class="secondary-button">Edit</button>
@@ -180,7 +200,7 @@ export function open(position, {sell = false, savedWallet = ""} = {}) {
   const priceField = $("[data-price-field]");
   const sizeLabel = $("[data-size-label]");
   const presets = $("[data-presets]");
-  const estimate = $("[data-estimate]");
+  const draftPayoff = $("[data-draft-payoff]");
   const reviewButton = form.querySelector("[type=submit]");
   const price = $("#order-price");
   const size = $("#order-size");
@@ -255,25 +275,41 @@ export function open(position, {sell = false, savedWallet = ""} = {}) {
     return orderIntent(market, book, selected, side, decimal(fixed(price.value.trim(), 2) / 100n), size.value.trim());
   }
 
-  function quoteSummary(draft) {
-    if (draft.type === "limit") return amount(draft.notional) + " pUSD at the limit, before fees";
-    const effective = isBuy() ? draft.gross + (draft.fee || 0n) : draft.gross - (draft.fee || 0n);
-    const cash = quoteNumber.format(Number(effective) / 1000000) + " pUSD" + (draft.fee === null ? " before fees" : "");
-    const shares = quoteNumber.format(Number(draft.shares) / 1000000) + " shares";
-    return isBuy() ? "Est. " + shares + " for " + cash : "Est. " + cash + " for " + shares;
+  function renderPayoff(region, draft) {
+    const buy = isBuy();
+    const marketOrder = type === "market";
+    const preview = draft && orderPreview(draft);
+    const set = (selector, value) => { region.querySelector(selector).textContent = value; };
+    const label = market?.outcomes[outcomeIndex]?.label;
+    set("[data-payoff-label]", buy ? "To win" : "You receive");
+    set("[data-payoff-condition]", buy ?
+      (label ? "If " + label + " wins" : "If your outcome wins") + (marketOrder ? " · estimated fill" : " · full fill at limit") :
+      (marketOrder ? "Estimated proceeds" : "Full fill at limit") + (preview?.fee == null ? " · before fees" : ""));
+    set("[data-payoff-value]", preview ? cashText(preview.payoff) : "—");
+    set("[data-avg-price]", preview ? displayBound(preview.average) : "—");
+    set("[data-shares]", preview ? quoteNumber.format(Number(preview.shares) / 1000000) : "—");
+    region.querySelector("[data-shares]").previousElementSibling.textContent = marketOrder ? "Est. shares" : "Shares";
+    region.querySelector("[data-cost-stat]").hidden = region.querySelector("[data-profit-stat]").hidden = !buy;
+    region.querySelector("[data-fee-stat]").hidden = preview?.fee == null || preview.fee === 0n;
+    set("[data-cost]", preview ? cashText(preview.cash) : "—");
+    set("[data-profit]", preview ? cashText(preview.profitIfWin ?? 0n) : "—");
+    set("[data-fee]", preview?.fee != null ? cashText(preview.fee) : "—");
+    region.querySelector("[data-cost]").previousElementSibling.textContent = preview && preview.fee == null ? "Cost before fees" : "Est. cost";
+    region.querySelector("[data-profit]").previousElementSibling.textContent = preview && preview.fee == null ?
+      "Profit if it wins, before fees" : "Est. profit if it wins";
+    if (draft?.partiallyQuoted) region.querySelector("[data-payoff-condition]").append(" · partial fill");
   }
 
   function updateEstimate() {
     reviewButton.textContent = isBuy() ? "Review buy" : "Review sell";
-    reviewButton.disabled = !session || !book || !size.value.trim() || (type === "limit" && !price.value.trim());
-    estimate.textContent = "";
-    if (!book || !size.value.trim()) return;
-    try {
-      const draft = draftOrder();
-      estimate.textContent = quoteSummary(draft) + (draft.partiallyQuoted ? " · Limited liquidity" : "");
-    } catch {
-      // Display actionable validation when the user requests a review.
+    const hasInput = Boolean(book && size.value.trim() && (type === "market" || price.value.trim()));
+    reviewButton.disabled = !session || !hasInput;
+    let draft;
+    if (hasInput) {
+      try { draft = draftOrder(); }
+      catch { /* Show actionable validation when the user requests a review. */ }
     }
+    renderPayoff(draftPayoff, draft);
   }
 
   function configureDraft() {
@@ -288,14 +324,20 @@ export function open(position, {sell = false, savedWallet = ""} = {}) {
     sizeLabel.textContent = budgetMode() ? "Amount (pUSD)" : "Shares";
     presets.replaceChildren();
     if (budgetMode() || !isBuy()) {
-      const labels = budgetMode() ? ["$1", "$5", "$10", "$25"] : ["25%", "50%", "Max"];
+      const labels = budgetMode() ? ["+$1", "+$5", "+$10", "+$25"] : ["25%", "50%", "Max"];
       for (const [index, label] of labels.entries()) {
         const button = element("button", label, "secondary-button");
         button.type = "button";
         button.disabled = !isBuy() && cashOrShares == null;
         button.addEventListener("click", () => {
-          if (budgetMode()) size.value = label.slice(1);
-          else size.value = decimal(cashOrShares * [25n, 50n, 100n][index] / 1000000n * 10000n);
+          if (budgetMode()) {
+            let current = 0n;
+            try { if (size.value.trim()) current = fixed(size.value.trim(), 2); }
+            catch { size.focus(); return; }
+            size.value = decimal(current + fixed(label.slice(2), 2));
+          } else {
+            size.value = decimal(cashOrShares * [25n, 50n, 100n][index] / 1000000n * 10000n);
+          }
           updateEstimate();
         });
         presets.append(button);
@@ -404,23 +446,34 @@ export function open(position, {sell = false, savedWallet = ""} = {}) {
   }
 
   walletEvents.addEventListener("change", walletChanged);
-  close.addEventListener("click", () => { if (!submitting) dialog.close(); });
-  dialog.addEventListener("cancel", (event) => { if (submitting) event.preventDefault(); });
-  dialog.addEventListener("close", () => {
+  function cleanup() {
     walletEvents.removeEventListener("change", walletChanged);
     active = undefined;
     dialog.remove();
-  }, {once: true});
+    if (docked) dock.hidden = true;
+    onClose?.();
+  }
+  function closeTicket() {
+    if (submitting) return false;
+    if (docked) cleanup();
+    else dialog.close();
+    return true;
+  }
+  close.addEventListener("click", closeTicket);
+  if (!docked) {
+    dialog.addEventListener("cancel", (event) => { if (submitting) event.preventDefault(); });
+    dialog.addEventListener("close", cleanup, {once: true});
+  }
   connect.addEventListener("click", async () => {
     error.textContent = "";
     connect.disabled = true;
     try {
       const provider = metaMask();
       const address = await connectWallet(provider);
-      if (!dialog.open) return;
+      if (!isOpen()) return;
       const connection = rememberConnection(provider, address);
       const suggested = savedFunder(address) || await funderFor(address);
-      if (connected !== connection || !dialog.open) return;
+      if (connected !== connection || !isOpen()) return;
       funder.value = suggested || (addressPattern.test(savedWallet) ? savedWallet : address);
       status.textContent = "Confirm your trading wallet, then enable trading.";
       renderWallet();
@@ -440,7 +493,7 @@ export function open(position, {sell = false, savedWallet = ""} = {}) {
     status.textContent = "Confirm the trading sign-in in MetaMask.";
     try {
       const wallet = await authenticate(connection.provider, connection.address, funder.value);
-      if (connection !== connected || !dialog.open) return;
+      if (connection !== connected || !isOpen()) return;
       session = connection.session = wallet;
       rememberFunder(wallet);
       funder.value = wallet.wallet;
@@ -488,7 +541,7 @@ export function open(position, {sell = false, savedWallet = ""} = {}) {
       $("[data-review-line]").textContent = intent.type === "market"
         ? label + (isBuy() ? selected.label + " · " + intent.input + " pUSD budget" : intent.input + " " + selected.label + " shares")
         : label + intent.size + " " + selected.label + " shares at " + displayBound(fixed(intent.price, 4));
-      $("[data-review-total]").textContent = quoteSummary(intent);
+      renderPayoff($("[data-review-payoff]"), intent);
       $("[data-review-details]").textContent = intent.type === "market" ?
         (isBuy() ? "Max. " : "Min. ") + displayBound(intent.bound) +
           " per share · unfilled amount cancels. " + (isBuy() ? "Fee reserve is estimated." : "") :
@@ -535,7 +588,7 @@ export function open(position, {sell = false, savedWallet = ""} = {}) {
       if (wallet !== session) throw new TicketError("The trading wallet changed. Reconnect before submitting.");
       status.textContent = "Review and sign the order in MetaMask.";
       const response = await placeOrder(wallet, approved, () => {
-        if (wallet !== session) throw new TicketError("The trading wallet changed. Reconnect before submitting.");
+        if (wallet !== session || !isOpen()) throw new TicketError("The trading context changed. Review the order again.");
         dispatched = true;
         status.textContent = "Waiting for Polymarket to confirm the order…";
       });
@@ -574,10 +627,16 @@ export function open(position, {sell = false, savedWallet = ""} = {}) {
   if (connected) funder.value = session?.wallet || savedFunder(connected.address) ||
     (addressPattern.test(savedWallet) ? savedWallet : connected.address);
   renderWallet();
-  document.querySelector("main").append(dialog);
-  dialog.showModal();
+  if (docked) {
+    dock.append(dialog);
+    dock.hidden = false;
+    close.focus({preventScroll: true});
+  } else {
+    document.querySelector("main").append(dialog);
+    dialog.showModal();
+  }
   marketFor(position.slug).then((result) => {
-    if (!dialog.open) return;
+    if (!isOpen()) return;
     if (position.condition_id && position.condition_id.toLowerCase() !== result.conditionId.toLowerCase()) {
       throw new TicketError("The current market does not match this position.");
     }
@@ -606,4 +665,5 @@ export function open(position, {sell = false, savedWallet = ""} = {}) {
     status.textContent = "";
     error.textContent = failureText(failure, "Market data couldn’t load. Reopen the ticket to retry.");
   });
+  if (docked) return {close: closeTicket, get busy() { return submitting; }};
 }

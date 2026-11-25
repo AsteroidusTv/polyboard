@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {marketIntent, OrderSide, orderIntent, recheckOrder, verifyOrderSignature} from "./client.js";
+import {marketIntent, OrderSide, orderIntent, orderPreview, recheckOrder, verifyOrderSignature} from "./client.js";
 
 const market = {version: "v1"};
 const book = {tickSize: 0.01, minOrderSize: "5", negRisk: false};
@@ -77,4 +77,17 @@ test("market estimates include known taker fees and guard against excess spend o
   const sell = marketIntent(feeMarket, tradable, outcome, OrderSide.SELL, "10");
   assert.throws(() => verifyOrderSignature({...payload, message: {...message, side: 1, makerAmount: 10000000n,
     takerAmount: 4900000n}}, session, sell), /exceeds/);
+});
+
+test("payout and profit stay distinct and sell proceeds account for fees", () => {
+  const buy = orderPreview({side: OrderSide.BUY, type: "market", shares: 10000000n, gross: 5000000n, fee: 100000n});
+  assert.deepEqual(buy, {shares: 10000000n, cash: 5100000n, payoff: 10000000n, average: 500000n,
+    fee: 100000n, profitIfWin: 4900000n});
+  const sell = orderPreview({side: OrderSide.SELL, type: "market", shares: 5000000n, gross: 2000000n, fee: 50000n});
+  assert.deepEqual(sell, {shares: 5000000n, cash: 1950000n, payoff: 1950000n, average: 400000n,
+    fee: 50000n, profitIfWin: null});
+  const limit = orderPreview(orderIntent(market, book, outcome, OrderSide.BUY, "0.52", "10"));
+  assert.equal(limit.payoff, 10000000n);
+  assert.equal(limit.profitIfWin, 4800000n);
+  assert.equal(limit.fee, null);
 });
