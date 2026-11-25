@@ -47,10 +47,15 @@ CREATE TABLE IF NOT EXISTS notices (
 CREATE INDEX IF NOT EXISTS notices_by_browser ON notices(session, id DESC);
 CREATE TABLE IF NOT EXISTS journal (
     session TEXT NOT NULL, note_id TEXT NOT NULL, market TEXT NOT NULL,
-    kind TEXT NOT NULL, body TEXT NOT NULL, created INTEGER NOT NULL, order_id TEXT,
+    kind TEXT NOT NULL, body TEXT NOT NULL, created INTEGER NOT NULL,
     PRIMARY KEY (session, note_id)
 );
 CREATE INDEX IF NOT EXISTS journal_by_market ON journal(session, market, created);
+CREATE TABLE IF NOT EXISTS journal_orders (
+    session TEXT NOT NULL, note_id TEXT NOT NULL, order_id TEXT NOT NULL,
+    PRIMARY KEY (session, note_id),
+    FOREIGN KEY (session, note_id) REFERENCES journal ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS subscriptions (
     session TEXT PRIMARY KEY, data TEXT NOT NULL
 );
@@ -194,9 +199,6 @@ class Watchlist:
         with self.connect() as db:
             db.execute("PRAGMA journal_mode = WAL")
             db.executescript(SCHEMA)
-            db.execute("BEGIN IMMEDIATE")
-            if "order_id" not in {row["name"] for row in db.execute("PRAGMA table_info(journal)")}:
-                db.execute("ALTER TABLE journal ADD COLUMN order_id TEXT")
 
     @contextmanager
     def connect(self):
@@ -263,8 +265,9 @@ class Watchlist:
 
     @staticmethod
     def journal_entries(db, session, market):
-        rows = db.execute("SELECT kind, body, created, order_id FROM journal WHERE session = ? AND market = ? "
-                          "ORDER BY created, rowid", (session, market))
+        rows = db.execute("SELECT journal.kind, journal.body, journal.created, journal_orders.order_id FROM journal "
+                          "LEFT JOIN journal_orders USING (session, note_id) WHERE journal.session = ? AND journal.market = ? "
+                          "ORDER BY journal.created, journal.rowid", (session, market))
         return {"entries": [dict(row) for row in rows]}
 
     def read_journal(self, session, market):
@@ -278,8 +281,10 @@ class Watchlist:
             return
         if db.execute("SELECT count(*) FROM journal WHERE session = ?", (session,)).fetchone()[0] >= 2000:
             raise WatchError("This browser’s trade journal is full.")
-        db.execute("INSERT INTO journal (session, note_id, market, kind, body, created, order_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                   (session, note_id, market, kind, body, int(time()), order_id))
+        db.execute("INSERT INTO journal VALUES (?, ?, ?, ?, ?, ?)",
+                   (session, note_id, market, kind, body, int(time())))
+        if order_id is not None:
+            db.execute("INSERT INTO journal_orders VALUES (?, ?, ?)", (session, note_id, order_id))
 
     def mutate(self, session, data):
         action = data.get("action")
