@@ -9,6 +9,7 @@ from urllib.error import URLError
 import market_catalog
 import precedents
 import review_server
+import resolution_rules
 import server
 import watchlist
 from public_api import market_exposure, snapshot
@@ -112,6 +113,33 @@ class WatchlistTests(unittest.TestCase):
             self.assertEqual(len(saved), 1)
             self.assertEqual([(row["baseline"], row["target"]) for row in saved[0]["alerts"]], [("0.40", "0.5")])
 
+    def test_journal_survives_unfollow_and_is_private_to_the_browser(self):
+        market = {"slug": "market", "title": "Market", "state": "open",
+                  "outcomes": [{"token_id": "1", "label": "Yes"}]}
+        follow_id = "40dd2db9-358e-49f7-92f0-8b58d6780cc1"
+        note = {"action": "journal", "slug": "market", "kind": "update",
+                "note_id": "219cb41b-b26f-4c52-bdc2-592a9f40a00f", "body": "Thesis still holds."}
+        alert = {"token": "1", "direction": "above", "kind": "price", "value": "50"}
+        with TemporaryDirectory() as folder, patch.object(watchlist, "market_details", return_value=market), (
+                patch.object(watchlist, "quote_batch", return_value={"1": "0.40"})):
+            store = watchlist.Watchlist(Path(folder))
+            follow = {"action": "follow", "slug": "market", "alert": alert,
+                      "note": {"note_id": follow_id, "body": "  Wait for the official ruling.  "}}
+            with self.assertRaises(watchlist.RequestError):
+                store.mutate("browser", {**follow, "alert": {**alert, "value": "101"}})
+            self.assertEqual(store.read_journal("browser", "market")["entries"], [])
+            store.mutate("browser", follow)
+            self.assertEqual(len(store.mutate("browser", follow)["watches"][0]["alerts"]), 1)
+            store.mutate("browser", note)
+            store.mutate("browser", note)
+            store.mutate("browser", {"action": "unfollow", "slug": "market"})
+            reopened = watchlist.Watchlist(Path(folder))
+            entries = reopened.read_journal("browser", "market")["entries"]
+            self.assertEqual([(entry["kind"], entry["body"]) for entry in entries], [
+                ("follow", "Wait for the official ruling."), ("update", "Thesis still holds.")])
+            self.assertEqual(reopened.read_journal("other-browser", "market")["entries"], [])
+            self.assertEqual(reopened.read("browser")["watches"], [])
+
     def test_stale_quote_and_market_closure_keep_follow_without_firing(self):
         market = {"slug": "market", "title": "Market", "state": "open", "outcomes": [
             {"token_id": "1", "label": "Yes"}, {"token_id": "2", "label": "No"}
@@ -182,6 +210,32 @@ class MarketCatalogTests(unittest.TestCase):
 
 
 class ReviewTests(unittest.TestCase):
+    def test_resolution_report_exposes_only_flags_quoting_the_official_rules(self):
+        target = review_server.review_target("", "resolution", "market")
+        self.assertEqual(target, ("", "resolution", "market", ""))
+        with self.assertRaises(ValueError):
+            review_server.review_target("", "resolution", "../market")
+        raw = {"question": "Will it happen?", "events": [{"slug": "parent"}],
+               "description": "Only official notices\nissued by June 1 count.",
+               "endDate": "2026-06-01T00:00:00Z"}
+        with patch.object(resolution_rules, "gamma_by_slug", return_value=raw):
+            data = resolution_rules.resolution_details("market")
+            self.assertEqual(data["market_url"], "https://polymarket.com/event/parent/market")
+            self.assertIsNotNone(data["scheduled_end"])
+            worker = review_server.Reviews("digest")
+            job = {"state": "running", "started": review_server.monotonic(), "market": "market", "mode": "resolution"}
+            worker.jobs[target] = job
+            report = {"flags": [
+                {"quote": "Only official notices issued by June 1 count.", "why": "An unofficial release does not count."},
+                {"quote": "Any press report counts.", "why": "This quote was not in the rules."}
+            ]}
+            with patch.object(review_server, "analyze", return_value=report):
+                worker.run(target, job)
+        result = worker.status(*target)
+        self.assertEqual(result["state"], "complete")
+        self.assertEqual(result["report"]["flags"], report["flags"][:1])
+        self.assertNotIn("rules", result["snapshot"])
+
     def test_queue_deduplicates_requests_and_completed_reports_survive_restart(self):
         release_first = Event()
         started = Event()

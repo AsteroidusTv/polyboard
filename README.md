@@ -78,6 +78,12 @@ The catalogue sends compact event previews and loads the complete filtered list 
 
 Use **Filters** to select a Yes or No price band, a scheduled end range, minimum liquidity, maximum spread, or categories to hide. Applied filters are saved in a browser cookie and shown as removable chips. Filter parameters in a shared URL take precedence. Catalogue and search results load more as you scroll, with a **Load more** button also available. The catalogue is read-only and uses the public [Polymarket Gamma API](https://docs.polymarket.com/api-reference/events/list-events-keyset-pagination).
 
+### Trade journal and resolution rules
+
+Use **Trade journal** in a market or position detail, or from the Watchlist, to record why you followed or traded a market and add dated updates. You can add an optional first note when following. Notes are private to the browser session and remain in the journal after unfollowing.
+
+**Check resolution** opens the published wording, scheduled market end and source where available. With a connected Codex session, it also flags wording that could materially change how the title is interpreted, with quotes checked against the published text.
+
 ### Watchlist and price alerts
 
 Select **Follow** in a market’s price-history dialog to follow the market and open its price alert form. Select **Follow without alert** to keep the market in your Watchlist without setting a threshold. **Watchlist** under **New trade** shows followed markets and their alerts. An alert can track either outcome crossing a price in cents or moving by a percentage from its midpoint when you followed it. The dashboard checks the public order-book midpoints about once a minute. Each alert fires once and can be rearmed from the Watchlist. The notification bell lists triggered alerts and links to the market’s chart.

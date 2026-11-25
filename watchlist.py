@@ -25,6 +25,8 @@ SESSION = re.compile(r"[A-Za-z0-9_-]{43}")
 TOKEN = re.compile(r"[0-9]{1,78}")
 KEY = re.compile(r"[A-Za-z0-9_-]+={0,2}")
 COOKIE = "polymarket_watchlist"
+NOTE_ID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")
+NOTE_KINDS = ("follow", "trade", "update")
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS watches (
     session TEXT NOT NULL, slug TEXT NOT NULL, market TEXT NOT NULL, quotes TEXT NOT NULL,
@@ -42,6 +44,12 @@ CREATE TABLE IF NOT EXISTS notices (
     push_after INTEGER, FOREIGN KEY (session, slug) REFERENCES watches ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS notices_by_browser ON notices(session, id DESC);
+CREATE TABLE IF NOT EXISTS journal (
+    session TEXT NOT NULL, note_id TEXT NOT NULL, market TEXT NOT NULL,
+    kind TEXT NOT NULL, body TEXT NOT NULL, created INTEGER NOT NULL,
+    PRIMARY KEY (session, note_id)
+);
+CREATE INDEX IF NOT EXISTS journal_by_market ON journal(session, market, created);
 CREATE TABLE IF NOT EXISTS subscriptions (
     session TEXT PRIMARY KEY, data TEXT NOT NULL
 );
@@ -54,6 +62,25 @@ class WatchError(ValueError):
 
 class RequestError(ValueError):
     pass
+
+
+def journal_market(value):
+    if not isinstance(value, str) or not (SLUG.fullmatch(value) or
+            value.startswith("token:") and TOKEN.fullmatch(value[6:])):
+        raise RequestError("Invalid market.")
+    return value
+
+
+def parse_note(data, kind=None):
+    if not isinstance(data, dict):
+        raise RequestError("Invalid journal note.")
+    note_id, body = data.get("note_id"), data.get("body")
+    kind = kind or data.get("kind")
+    if not isinstance(note_id, str) or not NOTE_ID.fullmatch(note_id) or kind not in NOTE_KINDS:
+        raise RequestError("Invalid journal note.")
+    if not isinstance(body, str) or not 1 <= len(body.strip()) <= 1000:
+        raise RequestError("Write a note of 1 to 1,000 characters.")
+    return note_id, kind, body.strip()
 
 
 def midpoint_prices(tokens):
@@ -227,6 +254,26 @@ class Watchlist:
         with self.connect() as db:
             return self.snapshot(db, session)
 
+    @staticmethod
+    def journal_entries(db, session, market):
+        rows = db.execute("SELECT kind, body, created FROM journal WHERE session = ? AND market = ? "
+                          "ORDER BY created, rowid", (session, market))
+        return {"entries": [dict(row) for row in rows]}
+
+    def read_journal(self, session, market):
+        with self.connect() as db:
+            return self.journal_entries(db, session, market)
+
+    @staticmethod
+    def add_note(db, session, market, note):
+        note_id, kind, body = note
+        if db.execute("SELECT 1 FROM journal WHERE session = ? AND note_id = ?", (session, note_id)).fetchone():
+            return
+        if db.execute("SELECT count(*) FROM journal WHERE session = ?", (session,)).fetchone()[0] >= 2000:
+            raise WatchError("This browser’s trade journal is full.")
+        db.execute("INSERT INTO journal VALUES (?, ?, ?, ?, ?, ?)",
+                   (session, note_id, market, kind, body, int(time())))
+
     def mutate(self, session, data):
         action = data.get("action")
         slug = data.get("slug")
@@ -235,11 +282,17 @@ class Watchlist:
         new_alert = data.get("alert") if action == "follow" else None
         if new_alert is not None and not isinstance(new_alert, dict):
             raise RequestError("Invalid price alert.")
+        note = None
+        if action == "journal":
+            slug = journal_market(slug)
+            note = parse_note(data)
+        elif action == "follow" and data.get("note") is not None:
+            note = parse_note(data["note"], kind="follow")
         market = quotes = None
         if action == "follow":
             with self.connect() as db:
                 watched = db.execute("SELECT 1 FROM watches WHERE session = ? AND slug = ?", (session, slug)).fetchone()
-                if watched and new_alert is None:
+                if watched and new_alert is None and note is None:
                     return self.snapshot(db, session)
                 if not watched:
                     self.check_capacity(db, session)
@@ -248,6 +301,9 @@ class Watchlist:
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             if action == "follow":
+                if note and db.execute("SELECT 1 FROM journal WHERE session = ? AND note_id = ?",
+                                       (session, note[0])).fetchone():
+                    return self.snapshot(db, session)
                 if not db.execute("SELECT 1 FROM watches WHERE session = ? AND slug = ?", (session, slug)).fetchone():
                     if market is None:
                         raise WatchError("This market was unfollowed. Try again to follow it.")
@@ -256,6 +312,11 @@ class Watchlist:
                                (session, slug, json.dumps(market), json.dumps(quotes), int(time())))
                 if new_alert is not None:
                     self.add_alert(db, session, slug, new_alert)
+                if note is not None:
+                    self.add_note(db, session, slug, note)
+            elif action == "journal":
+                self.add_note(db, session, slug, note)
+                return self.journal_entries(db, session, slug)
             elif action == "unfollow":
                 db.execute("DELETE FROM watches WHERE session = ? AND slug = ?", (session, slug))
             elif action == "add-alert":
@@ -470,8 +531,11 @@ def serve(handler, store, write=False):
     session = session_cookie(handler)
     try:
         if not write:
-            market = parse_qs(urlsplit(handler.path).query, keep_blank_values=True).get("market")
-            if market is None:
+            query = parse_qs(urlsplit(handler.path).query, keep_blank_values=True)
+            market = query.get("market")
+            if "journal" in query:
+                handler.send_json(200, store.read_journal(session, journal_market(query["journal"][0])))
+            elif market is None:
                 handler.send_json(200, store.read(session))
             else:
                 details, quotes = watch_preview(market[0])
@@ -490,7 +554,7 @@ def serve(handler, store, write=False):
         browser = session or secrets.token_urlsafe(32)
         result = store.mutate(browser, data)
         headers = {}
-        if not session and data.get("action") == "follow":
+        if not session and data.get("action") in ("follow", "journal"):
             secure = "; Secure" if handler.headers.get("X-Forwarded-Proto") == "https" else ""
             headers["Set-Cookie"] = f"{COOKIE}={browser}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000{secure}"
         handler.send_json(200, result, headers)

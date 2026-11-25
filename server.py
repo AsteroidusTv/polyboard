@@ -392,6 +392,25 @@ class Dashboard(BaseHTTPRequestHandler):
             self.respond(304 if unchanged else 200, b"" if unchanged else content, mime,
                          {"Cache-Control": cache_control, "ETag": tag})
             return
+        if url.path == "/api/market-rules":
+            from precedents import SLUG
+            from resolution_rules import resolution_details
+
+            slug = query.get("market", [""])[0]
+            if not SLUG.fullmatch(slug):
+                self.send_json(400, {"error": "Select a valid market."})
+                return
+            try:
+                data, _ = RESPONSES.read((url.path, slug), lambda: resolution_details(slug), ttl=60,
+                                         cache_if=bool)
+            except (URLError, TimeoutError, ValueError, TypeError, AttributeError):
+                self.send_json(502, {"error": "Published market rules couldn’t load. Try again."})
+                return
+            if data is None:
+                self.send_json(404, {"error": "This market couldn’t be found."})
+                return
+            self.send_json(200, data)
+            return
         if url.path == "/api/market-metadata":
             from precedents import SLUG, discovery_market_details
 

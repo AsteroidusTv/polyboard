@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "flags": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "quote": {"type": "string", "minLength": 8, "maxLength": 360},
+          "why": {"type": "string", "maxLength": 280}
+        },
+        "required": ["quote", "why"]
+      }
+    }
+  },
+  "required": ["flags"]
+}

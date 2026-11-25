@@ -739,6 +739,135 @@ const DashboardWidgets = (() => {
     return row;
   }
 
+  function checkResolution(market) {
+    const dialog = node("dialog", undefined, "watch-dialog");
+    dialog.setAttribute("aria-labelledby", "resolution-check-heading");
+    dialog.innerHTML = `
+      <header class="watch-dialog-head">
+        <div><h2 id="resolution-check-heading">Check resolution</h2><p class="muted watch-dialog-subtitle"></p></div>
+        <form method="dialog"><button class="text-button activity-dismiss" aria-label="Close resolution check" autofocus>×</button></form>
+      </header>
+      <div class="watch-dialog-body">
+        <p class="muted resolution-status" role="status">Loading published rules…</p>
+        <div class="resolution-facts"></div>
+        <div class="resolution-analysis" hidden>
+          <button type="button" class="secondary-button">Check wording</button>
+          <p class="muted" role="status"></p>
+          <ul class="resolution-flags"></ul>
+        </div>
+        <div class="resolution-original" hidden>
+          <h3>Published wording</h3>
+          <p class="resolution-wording" tabindex="0" aria-label="Published resolution wording"></p>
+          <p class="muted resolution-truncated" hidden>Excerpt only. Read the full wording on Polymarket.</p>
+        </div>
+      </div>`;
+    dialog.querySelector(".watch-dialog-subtitle").textContent = market.title || market.slug;
+    const status = dialog.querySelector(".resolution-status");
+    const analysis = dialog.querySelector(".resolution-analysis");
+    const progress = analysis.querySelector("[role=status]");
+    const flags = analysis.querySelector("ul");
+    const run = analysis.querySelector("button");
+    const controller = new AbortController();
+    const {signal} = controller;
+    const params = {mode: "resolution", market: market.slug};
+    const reviewURL = "/api/reviews?" + new URLSearchParams(params);
+    const when = new Intl.DateTimeFormat("en-US", {dateStyle: "medium", timeStyle: "short"});
+
+    function addLink(box, label, value) {
+      let url;
+      try { url = new URL(value); } catch { return; }
+      if (url.protocol !== "https:" || url.username || url.password) return;
+      const link = node("a", label + " ↗", "precedent-link");
+      link.href = url.href;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      box.append(link);
+    }
+
+    function render({report, snapshot}) {
+      flags.replaceChildren(...report.flags.map(({quote, why}) => {
+        const item = node("li");
+        item.append(node("p", why), node("blockquote", quote, "muted"));
+        return item;
+      }));
+      const result = report.flags.length ? "" : "No ambiguity was flagged in the wording reviewed. ";
+      const excerpt = snapshot.rules_truncated ? "Only an excerpt was checked. " : "";
+      progress.textContent = result + excerpt + "Checked " + when.format(new Date(snapshot.as_of)) + ".";
+      run.textContent = "Recheck wording";
+    }
+
+    async function monitor(start) {
+      run.disabled = true;
+      run.onclick = () => monitor(true);
+      progress.textContent = start ? "Checking the wording…" : "";
+      try {
+        let data = start ? null : await DashboardSettings.reviewRequest(reviewURL, {signal});
+        if (signal.aborted) return;
+        if (!data || data.state === "idle") {
+          progress.textContent = "Checking the wording…";
+          data = await DashboardSettings.reviewRequest("/api/reviews", {
+            method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(params), signal
+          });
+        }
+        while (!signal.aborted && ["running", "queued"].includes(data.state)) {
+          progress.textContent = data.state === "queued" ? "Waiting for another analysis to finish…" : "Checking the wording…";
+          await new Promise((resolve) => setTimeout(resolve, 2300));
+          if (signal.aborted) return;
+          data = await DashboardSettings.reviewRequest(reviewURL, {signal});
+        }
+        if (signal.aborted) return;
+        if (data.state === "complete") render(data);
+        else if (data.state === "failed") progress.textContent = data.error || "The check couldn’t finish.";
+      } catch (failure) {
+        if (signal.aborted) return;
+        if (failure.status === 401) {
+          progress.textContent = "Connect Codex to check for ambiguities.";
+          run.textContent = "Connect Codex";
+          run.onclick = () => {
+            dialog.close();
+            DashboardSettings.open("codex");
+          };
+        } else {
+          progress.textContent = "The wording check couldn’t load. Try again.";
+        }
+      } finally {
+        if (!signal.aborted) run.disabled = false;
+      }
+    }
+
+    dialog.addEventListener("close", () => {
+      controller.abort();
+      dialog.remove();
+    }, {once: true});
+    document.querySelector("main").append(dialog);
+    dialog.showModal();
+    json("/api/market-rules", {market: market.slug}, signal).then((data) => {
+      if (signal.aborted) return;
+      const facts = dialog.querySelector(".resolution-facts");
+      if (Number.isFinite(data.scheduled_end)) {
+        facts.append(node("span", "Scheduled market end: " + when.format(data.scheduled_end * 1000), "muted"));
+      }
+      addLink(facts, "Official market", data.market_url);
+      if (data.resolution_source) {
+        const count = facts.childElementCount;
+        addLink(facts, "Resolution source", data.resolution_source);
+        if (facts.childElementCount === count) facts.append(node("span", "Resolution source: " + data.resolution_source, "muted"));
+      }
+      status.textContent = data.rules ? "" : "No published resolution wording was returned.";
+      status.hidden = Boolean(data.rules);
+      if (!data.rules) return;
+      dialog.querySelector(".resolution-original").hidden = false;
+      dialog.querySelector(".resolution-wording").textContent = data.rules;
+      dialog.querySelector(".resolution-truncated").hidden = !data.rules_truncated;
+      if (DashboardSettings.reviewEnabled) {
+        analysis.hidden = false;
+        monitor(false);
+      }
+    }).catch(() => {
+      if (!signal.aborted) status.textContent = "Published rules couldn’t load. Reopen this check to try again.";
+    });
+  }
+
   function positionDialog() {
     const dialog = node("dialog");
     dialog.id = "position-dialog";
@@ -755,6 +884,8 @@ const DashboardWidgets = (() => {
         <div class="activity-actions">
           <button type="button" class="secondary-button" id="activity-follow" hidden>Follow</button>
           <button type="button" class="secondary-button" id="activity-alert" hidden>Add alert</button>
+          <button type="button" class="text-button" id="activity-journal" aria-haspopup="dialog" hidden>Trade journal</button>
+          <button type="button" class="text-button" id="activity-resolution" aria-haspopup="dialog" hidden>Check resolution</button>
           <a class="secondary-button button-link" id="activity-precedents" hidden>Compare with past markets</a>
           <a class="secondary-button button-link" id="activity-holders" hidden>Holder analysis</a>
           <a class="secondary-button button-link activity-external" id="activity-polymarket" target="_blank" rel="noopener noreferrer">Open on Polymarket ↗</a>
@@ -863,6 +994,12 @@ const DashboardWidgets = (() => {
     const closed = market?.settled || ["won", "lost", "settled"].includes(position.status);
     DashboardWatchlist.mountActions(dialog.querySelector("#activity-follow"), dialog.querySelector("#activity-alert"),
       dialog.querySelector("#activity-watch-error"), {...position, ...preview, state: preview?.state || (closed ? "closed" : undefined)});
+    const journal = dialog.querySelector("#activity-journal");
+    journal.hidden = !DashboardWatchlist.journalKey(position);
+    journal.onclick = () => DashboardWatchlist.openJournal(position, !preview);
+    const resolution = dialog.querySelector("#activity-resolution");
+    resolution.hidden = !/^[a-z0-9][a-z0-9-]{0,250}$/.test(position.slug || "") || Boolean(position.is_combo);
+    resolution.onclick = () => checkResolution(position);
     const namedOutcome = !preview && position.outcome && !/^(yes|no)$/i.test(position.outcome);
     compare.hidden = !/^[a-z0-9][a-z0-9-]{0,250}$/.test(position.slug || "") ||
       preview?.compare === false || Boolean(position.is_combo || namedOutcome);

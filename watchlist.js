@@ -76,13 +76,13 @@ const DashboardWatchlist = (() => {
     });
   }
 
-  function change(data) {
+  function change(data, apply = showState) {
     const task = pending.then(async () => {
       isUpdating = true;
       readRequest?.abort();
       readRequest = null;
       try {
-        return showState(await request(data));
+        return apply(await request(data));
       } finally {
         isUpdating = false;
       }
@@ -267,7 +267,10 @@ const DashboardWatchlist = (() => {
       alerts.append(line);
     }
     const footer = el("div", undefined, "watch-inline watch-card-footer");
-    footer.append(stats, button("Unfollow", () => confirmUnfollow(market), "text-button"));
+    const actions = el("div", undefined, "watch-rule-actions");
+    actions.append(button("Trade journal", () => openJournal(market), "text-button"),
+      button("Unfollow", () => confirmUnfollow(market), "text-button"));
+    footer.append(stats, actions);
     node.append(head, quotes, alerts, error, footer);
     return node;
   }
@@ -292,6 +295,107 @@ const DashboardWatchlist = (() => {
     // Keep keyboard focus stable during background updates.
     if (cards.contains(document.activeElement) && !isUpdating) return;
     cards.replaceChildren(...state.watches.map(card));
+  }
+
+  function journalKey({slug, token_id: token}) {
+    if (/^[a-z0-9][a-z0-9-]{0,250}$/.test(slug || "")) return slug;
+    return /^\d{1,78}$/.test(token || "") ? "token:" + token : "";
+  }
+
+  function openJournal(market, fromPosition = false) {
+    const slug = journalKey(market);
+    if (!slug) return;
+    const journal = dialog("trade-journal", "Trade journal");
+    const subtitle = journal.querySelector(".watch-dialog-subtitle");
+    subtitle.textContent = market.title || "Polymarket position";
+    subtitle.hidden = false;
+    const body = journal.querySelector(".watch-dialog-body");
+    const list = el("ol", undefined, "journal-entries");
+    const status = el("p", "Loading notes…", "muted");
+    status.setAttribute("role", "status");
+    const form = el("form", undefined, "watch-alert-form");
+    form.innerHTML = `<div><label for="journal-kind">Entry type</label>
+        <select id="journal-kind">
+          <option value="trade">Trade reason</option>
+          <option value="follow">Follow reason</option>
+          <option value="update">Update</option>
+        </select></div>
+      <div><label for="journal-note">Note</label>
+        <textarea id="journal-note" rows="3" maxlength="1000" required></textarea></div>
+      <p class="negative" role="alert"></p>
+      <div class="watch-form-actions"><button type="submit">Save note</button></div>`;
+    body.append(status, list, form);
+    const type = form.querySelector("#journal-kind");
+    const note = form.querySelector("#journal-note");
+    const save = form.querySelector("[type=submit]");
+    const error = form.querySelector("[role=alert]");
+    const labels = {trade: "Trade reason", follow: "Follow reason", update: "Update"};
+    const placeholders = {
+      trade: "Why did you take this position? What would make you change your mind?",
+      follow: "Why are you watching this market? What are you waiting to see?",
+      update: "What changed? Does your original reasoning still hold?"
+    };
+    const setPlaceholder = () => { note.placeholder = placeholders[type.value]; };
+    type.value = fromPosition ? "trade" : "update";
+    type.addEventListener("change", setPlaceholder);
+    setPlaceholder();
+    const requestController = new AbortController();
+    let revision = 0;
+    let draft;
+    function render({entries}) {
+      status.textContent = entries.length ? "" : "No notes yet.";
+      list.replaceChildren(...entries.map((entry) => {
+        const row = el("li");
+        const heading = el("div", undefined, "journal-entry-heading");
+        const date = new Date(entry.created * 1000);
+        const stamp = el("time", time.format(date), "muted");
+        stamp.dateTime = date.toISOString();
+        heading.append(el("strong", labels[entry.kind]), stamp);
+        row.append(heading, el("p", entry.body));
+        return row;
+      }));
+    }
+    journal.addEventListener("close", () => {
+      requestController.abort();
+      journal.remove();
+    }, {once: true});
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const text = note.value.trim();
+      if (!text) {
+        error.textContent = "Write a note before saving.";
+        note.focus();
+        return;
+      }
+      if (draft?.body !== text || draft.kind !== type.value) {
+        draft = {action: "journal", slug, kind: type.value, body: text, note_id: crypto.randomUUID()};
+      }
+      const current = ++revision;
+      perform(save, async () => {
+        const saved = draft;
+        const data = await change(saved, (result) => result);
+        if (!journal.open || revision !== current) return;
+        render(data);
+        if (note.value.trim() === saved.body && type.value === saved.kind) {
+          note.value = "";
+          type.value = "update";
+          setPlaceholder();
+        }
+        draft = undefined;
+      }, error);
+    });
+    journal.showModal();
+    request(undefined, AbortSignal.any([requestController.signal, AbortSignal.timeout(15000)]),
+      "?" + new URLSearchParams({journal: slug})).then((data) => {
+      if (!journal.open || revision) return;
+      if (fromPosition && data.entries.some(({kind}) => kind === "trade") && !note.value) {
+        type.value = "update";
+        setPlaceholder();
+      }
+      render(data);
+    }).catch(() => {
+      if (journal.open && !revision) status.textContent = "Notes couldn’t load. Reopen the journal to try again.";
+    });
   }
 
   function alertBody(market) {
@@ -326,6 +430,8 @@ const DashboardWatchlist = (() => {
   function openAlert(market, token, fromFollow = false) {
     const body = alertBody(market);
     body.innerHTML = `<form class="watch-alert-form">
+      ${fromFollow ? `<div><label for="watch-note">Why follow this market? <span class="muted">(optional)</span></label>
+        <textarea id="watch-note" rows="2" maxlength="1000" placeholder="Save your reasoning in the Trade journal"></textarea></div>` : ""}
       <p class="muted">Alerts trigger when a sampled midpoint crosses the threshold. Prices are checked about once a minute.</p>
       <div class="watch-alert-fields">
         <div><label for="watch-outcome">Outcome</label><select id="watch-outcome"></select></div>
@@ -351,6 +457,7 @@ const DashboardWatchlist = (() => {
     const secondary = form.querySelector("[type=button]");
     const error = form.querySelector("[role=alert]");
     let saving = false;
+    let draftNote;
     for (const side of market.outcomes) {
       const option = el("option", side.label);
       option.value = side.token_id;
@@ -382,7 +489,9 @@ const DashboardWatchlist = (() => {
       saving = submit.disabled = secondary.disabled = true;
       error.textContent = "";
       try {
-        await change(fromFollow ? {action: "follow", slug: market.slug, alert}
+        const text = fromFollow ? form.querySelector("#watch-note").value.trim() : "";
+        if (text && draftNote?.body !== text) draftNote = {body: text, note_id: crypto.randomUUID()};
+        await change(fromFollow ? {action: "follow", slug: market.slug, alert, note: text ? draftNote : undefined}
           : {action: "add-alert", slug: market.slug, ...alert});
         if (form.isConnected && alertDialog.open) alertDialog.close();
       } catch (failure) {
@@ -558,5 +667,5 @@ const DashboardWatchlist = (() => {
   refresh();
   setInterval(() => { if (!document.hidden) refresh(); }, 30000);
 
-  return {mountActions};
+  return {mountActions, journalKey, openJournal};
 })();
