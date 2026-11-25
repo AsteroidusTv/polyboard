@@ -1,6 +1,6 @@
 import {
   addressPattern, authenticate, balanceFor, bookFor, cancelOrder, connectWallet, decimal, fixed, funderFor, marketFor, marketIntent,
-  openOrders, orderIdPattern, orderIntent, orderPreview, OrderSide, placeOrder, recheckOrder, TicketError, verifyEligibility
+  openOrders, orderIdPattern, orderIntent, orderPreview, OrderSide, placeOrder, recheckOrder, TicketError, verifyEligibility, WalletError
 } from "./client.js";
 
 const slugPattern = /^[a-z0-9][a-z0-9-]{0,250}$/;
@@ -69,6 +69,7 @@ function rememberConnection(provider, address) {
   const onChange = () => disconnect();
   connected = {provider, address, onChange, session: null};
   for (const event of ["accountsChanged", "chainChanged", "disconnect"]) provider.on?.(event, onChange);
+  walletEvents.dispatchEvent(new Event("change"));
   return connected;
 }
 
@@ -85,6 +86,16 @@ function failureText(error, fallback) {
   return fallback;
 }
 
+function walletIssue(failure) {
+  if (failure instanceof WalletError) return failure;
+  if (failure.status === 401) return new WalletError("The trading session expired. Reconnect MetaMask.", true);
+  if (failure.name === "RequestRejectedError" && failure.status === 400 &&
+      /allowance is not enough|not enough balance|insufficient (?:balance|allowance)/i.test(failure.message)) {
+    return new WalletError("Polymarket rejected the order because of balance or approvals.");
+  }
+  return null;
+}
+
 function bestPrice(levels, buy) {
   if (!levels.length) return null;
   return (buy ? Math.min : Math.max)(...levels.map((level) => Number(level.price)));
@@ -92,6 +103,121 @@ function bestPrice(levels, buy) {
 
 const cents = (price) => price == null ? "—" : centFormat.format(price * 100) + "¢";
 const displayBound = (units) => cents(Number(units) / 1000000);
+
+export function mountWalletSettings(root, profileWallet) {
+  root.innerHTML = `
+    <button type="button" class="secondary-button" data-connect>Connect MetaMask</button>
+    <div data-account hidden>
+      <p class="muted trading-signer"></p>
+      <div data-wallet-setup>
+        <label for="settings-trading-funder">Polymarket trading wallet</label>
+        <div class="order-inline">
+          <input id="settings-trading-funder" type="text" placeholder="0x…" spellcheck="false" autocomplete="off">
+          <button type="button" class="secondary-button" data-enable>Enable trading</button>
+        </div>
+        <p class="muted">Use the public wallet address shown in your Polymarket profile.</p>
+      </div>
+      <p data-trading-balance class="muted"></p>
+      <button type="button" class="text-button" data-disconnect>Disconnect</button>
+    </div>
+    <p data-wallet-status class="muted" role="status"></p>
+    <p data-wallet-error class="negative" role="alert"></p>
+    <p class="muted"><a href="https://polymarket.com/" target="_blank" rel="noopener noreferrer">Manage funds and approvals on Polymarket ↗</a></p>`;
+  const find = (selector) => root.querySelector(selector);
+  const connect = find("[data-connect]");
+  const enable = find("[data-enable]");
+  const funder = find("#settings-trading-funder");
+  const status = find("[data-wallet-status]");
+  const error = find("[data-wallet-error]");
+  const balance = find("[data-trading-balance]");
+
+  function suggest(address) {
+    return savedFunder(address) || (addressPattern.test(profileWallet()) ? profileWallet() : address);
+  }
+
+  function render() {
+    const wallet = connected?.session;
+    connect.hidden = Boolean(connected);
+    find("[data-account]").hidden = !connected;
+    find("[data-wallet-setup]").hidden = Boolean(wallet);
+    const signer = find(".trading-signer");
+    signer.textContent = wallet ? "Trading wallet " + wallet.wallet : connected ? "MetaMask " + connected.address : "";
+    if (!wallet && connected && !funder.value) funder.value = suggest(connected.address);
+    if (!wallet) balance.textContent = "";
+  }
+
+  function refresh() {
+    render();
+    const wallet = connected?.session;
+    if (!wallet) return;
+    balanceFor(wallet, OrderSide.BUY).then((account) => {
+      if (wallet === connected?.session) balance.textContent = amount(account.balance) + " pUSD in trading wallet";
+    }).catch(() => {
+      if (wallet === connected?.session) balance.textContent = "Trading balance unavailable.";
+    });
+  }
+
+  walletEvents.addEventListener("change", () => {
+    if (!connected) {
+      funder.value = "";
+      status.textContent = "Wallet disconnected.";
+    }
+    refresh();
+  });
+  connect.addEventListener("click", async () => {
+    error.textContent = "";
+    status.textContent = "Connecting MetaMask…";
+    connect.disabled = enable.disabled = true;
+    try {
+      const provider = metaMask();
+      const address = await connectWallet(provider);
+      const connection = rememberConnection(provider, address);
+      render();
+      const remembered = savedFunder(address);
+      const initial = funder.value;
+      const suggested = remembered || await funderFor(address);
+      if (connected !== connection) return;
+      if (funder.value === initial) funder.value = suggested || suggest(address);
+      status.textContent = "Confirm your trading wallet, then enable trading.";
+      if (root.closest("dialog").open && document.activeElement === connect) funder.focus();
+    } catch (failure) {
+      status.textContent = "";
+      error.textContent = failureText(failure, "MetaMask could not connect. Check your account and Polygon network.");
+    } finally {
+      connect.disabled = enable.disabled = false;
+      if (connected && root.closest("dialog").open && document.activeElement === document.body) funder.focus();
+    }
+  });
+  enable.addEventListener("click", async () => {
+    const connection = connected;
+    if (!connection || enable.disabled || connect.disabled) return;
+    enable.disabled = funder.readOnly = true;
+    error.textContent = "";
+    status.textContent = "Confirm the trading sign-in in MetaMask.";
+    try {
+      const wallet = await authenticate(connection.provider, connection.address, funder.value);
+      if (connection !== connected) return;
+      connection.session = wallet;
+      rememberFunder(wallet);
+      status.textContent = "Trading enabled for this tab.";
+      walletEvents.dispatchEvent(new Event("change"));
+    } catch (failure) {
+      if (connection !== connected) return;
+      if (failure instanceof WalletError && failure.reconnect) disconnect();
+      status.textContent = "";
+      error.textContent = failureText(failure, "Polymarket sign-in failed. Verify the profile wallet and try again.");
+    } finally {
+      enable.disabled = funder.readOnly = false;
+    }
+  });
+  find("[data-disconnect]").addEventListener("click", () => {
+    error.textContent = "";
+    disconnect();
+    if (root.closest("dialog").open) connect.focus();
+  });
+  render();
+  return refresh;
+}
 
 const payoffMarkup = `
   <div class="order-payoff">
@@ -106,7 +232,7 @@ const payoffMarkup = `
     <div data-fee-stat hidden><dt>Est. fees</dt><dd data-fee>—</dd></div>
   </dl>`;
 
-export function open(position, {sell = false, savedWallet = "", dock, parent, onClose} = {}) {
+export function open(position, {sell = false, dock, parent, onClose} = {}) {
   if (active || !slugPattern.test(position.slug || "")) return;
   const journalMarket = {slug: position.slug, title: position.title};
   const docked = Boolean(dock && parent && matchMedia("(min-width: 920px)").matches);
@@ -120,22 +246,6 @@ export function open(position, {sell = false, savedWallet = "", dock, parent, on
       <button type="button" data-close class="text-button activity-dismiss" aria-label="Close order ticket" autofocus>×</button>
     </header>
     <div class="watch-dialog-body">
-      <div class="order-wallet">
-        <button type="button" data-connect class="secondary-button">Connect MetaMask</button>
-        <div data-account hidden>
-          <p class="muted order-address"></p>
-          <div data-wallet-setup>
-            <label for="order-funder">Polymarket trading wallet</label>
-            <div class="order-inline">
-              <input id="order-funder" type="text" placeholder="0x…" spellcheck="false" autocomplete="off">
-              <button type="button" data-enable class="secondary-button">Enable trading</button>
-            </div>
-            <p class="muted">Use the public wallet address shown in your Polymarket profile.</p>
-          </div>
-          <button type="button" data-disconnect class="text-button">Disconnect</button>
-        </div>
-        <p class="muted" data-funding-help>Fund the wallet and manage any required approvals on <a href="https://polymarket.com/" target="_blank" rel="noopener noreferrer">Polymarket</a>.</p>
-      </div>
       <p data-status role="status" class="muted">Loading market…</p>
       <p data-error role="alert" class="negative"></p>
       <button type="button" data-acknowledge class="secondary-button" hidden>I checked my Polymarket orders</button>
@@ -160,7 +270,6 @@ export function open(position, {sell = false, savedWallet = "", dock, parent, on
           </div>
           <div data-presets class="order-presets" aria-label="Quick amounts" role="group"></div>
           <div class="order-copy">
-            <p data-balance class="muted"></p>
             <p data-quote class="muted" role="status"></p>
           </div>
           <div data-draft-payoff class="order-estimate">${payoffMarkup}</div>
@@ -191,9 +300,6 @@ export function open(position, {sell = false, savedWallet = "", dock, parent, on
     </div>`;
   const $ = (selector) => dialog.querySelector(selector);
   const close = $("[data-close]");
-  const connect = $("[data-connect]");
-  const enable = $("[data-enable]");
-  const funder = $("#order-funder");
   const form = $(".order-form");
   const fields = $("fieldset");
   const outcomes = $(".order-outcomes");
@@ -209,7 +315,6 @@ export function open(position, {sell = false, savedWallet = "", dock, parent, on
   const error = $("[data-error]");
   const status = $("[data-status]");
   const quote = $("[data-quote]");
-  const balance = $("[data-balance]");
   const orders = $("[data-orders]");
   const ordersList = orders.querySelector("ul");
   const ordersStatus = $("[data-orders-status]");
@@ -237,21 +342,16 @@ export function open(position, {sell = false, savedWallet = "", dock, parent, on
   const isBuy = () => side === OrderSide.BUY;
   const budgetMode = () => type === "market" && isBuy();
 
+  function openWalletSettings(message) {
+    DashboardSettings.open("trading", message);
+  }
+
   function renderWallet() {
-    connect.hidden = Boolean(connected);
-    $("[data-account]").hidden = !connected;
-    const address = session?.wallet || connected?.address || "";
-    const identity = $(".order-address");
-    identity.textContent = (session ? "Trading wallet " : "MetaMask ") +
-      (address ? address.slice(0, 8) + "…" + address.slice(-6) : "");
-    identity.title = address;
-    $("[data-wallet-setup]").hidden = Boolean(session);
-    $("[data-funding-help]").hidden = Boolean(session);
-    funder.readOnly = Boolean(session) || enable.disabled;
     orders.hidden = !session || !market;
     form.hidden = !market || Boolean(intent);
     acknowledge.hidden = !uncertain();
     fields.disabled = Boolean(intent) || submitting || uncertain();
+    form.noValidate = !session;
     updateEstimate();
     if (uncertain()) error.textContent = unknownOrderMessage;
   }
@@ -303,7 +403,7 @@ export function open(position, {sell = false, savedWallet = "", dock, parent, on
   function updateEstimate() {
     reviewButton.textContent = isBuy() ? "Review buy" : "Review sell";
     const hasInput = Boolean(book && size.value.trim() && (type === "market" || price.value.trim()));
-    reviewButton.disabled = !session || !hasInput;
+    reviewButton.disabled = Boolean(session) && !hasInput;
     let draft;
     if (hasInput) {
       try { draft = draftOrder(); }
@@ -357,16 +457,12 @@ export function open(position, {sell = false, savedWallet = "", dock, parent, on
     book = null;
     cashOrShares = null;
     quote.textContent = "Loading order book…";
-    balance.textContent = "";
     configureDraft();
-    if (wallet) balanceFor(wallet, action, selected).then((account) => {
+    if (wallet && !buy) balanceFor(wallet, action, selected).then((account) => {
       if (request !== quoteRequest) return;
       cashOrShares = account.balance;
-      balance.textContent = amount(cashOrShares) + (buy ? " pUSD in trading wallet" : " shares in trading wallet");
-      for (const button of presets.children) button.disabled = !buy && cashOrShares < 10000n;
-    }).catch(() => {
-      if (request === quoteRequest) balance.textContent = "Trading balance unavailable.";
-    });
+      for (const button of presets.children) button.disabled = cashOrShares < 10000n;
+    }).catch(() => { /* Sell presets stay disabled when balance is unavailable. */ });
     await Promise.all(market.outcomes.map(async (item, index) => {
       try {
         const current = await bookFor(market, item);
@@ -419,7 +515,13 @@ export function open(position, {sell = false, savedWallet = "", dock, parent, on
             await cancelOrder(wallet, order.id);
             await loadOrders();
           } catch (failure) {
-            error.textContent = failureText(failure, "Cancellation could not be confirmed. Refresh orders or check Polymarket.");
+            const issue = walletIssue(failure);
+            if (issue) {
+              if (issue.reconnect && wallet === connected?.session) disconnect();
+              openWalletSettings(issue.message);
+            } else {
+              error.textContent = failureText(failure, "Cancellation could not be confirmed. Refresh orders or check Polymarket.");
+            }
             cancel.disabled = false;
             cancel.textContent = "Cancel";
           }
@@ -435,14 +537,14 @@ export function open(position, {sell = false, savedWallet = "", dock, parent, on
   }
 
   function walletChanged() {
-    session = undefined;
-    funder.value = "";
+    session = connected?.session;
     ordersList.replaceChildren();
     ordersStatus.textContent = "";
     error.textContent = "";
     resetReview();
     loadQuote();
-    if (!submitting) status.textContent = "Wallet disconnected.";
+    if (!submitting) status.textContent = "";
+    loadOrders();
   }
 
   walletEvents.addEventListener("change", walletChanged);
@@ -464,53 +566,6 @@ export function open(position, {sell = false, savedWallet = "", dock, parent, on
     dialog.addEventListener("cancel", (event) => { if (submitting) event.preventDefault(); });
     dialog.addEventListener("close", cleanup, {once: true});
   }
-  connect.addEventListener("click", async () => {
-    error.textContent = "";
-    connect.disabled = true;
-    try {
-      const provider = metaMask();
-      const address = await connectWallet(provider);
-      if (!isOpen()) return;
-      const connection = rememberConnection(provider, address);
-      const suggested = savedFunder(address) || await funderFor(address);
-      if (connected !== connection || !isOpen()) return;
-      funder.value = suggested || (addressPattern.test(savedWallet) ? savedWallet : address);
-      status.textContent = "Confirm your trading wallet, then enable trading.";
-      renderWallet();
-      funder.focus();
-    } catch (failure) {
-      error.textContent = failureText(failure, "MetaMask could not connect. Check your account and Polygon network.");
-    } finally {
-      connect.disabled = false;
-    }
-  });
-  enable.addEventListener("click", async () => {
-    const connection = connected;
-    if (!connection) return;
-    enable.disabled = true;
-    funder.readOnly = true;
-    error.textContent = "";
-    status.textContent = "Confirm the trading sign-in in MetaMask.";
-    try {
-      const wallet = await authenticate(connection.provider, connection.address, funder.value);
-      if (connection !== connected || !isOpen()) return;
-      session = connection.session = wallet;
-      rememberFunder(wallet);
-      funder.value = wallet.wallet;
-      status.textContent = "Trading enabled for this tab.";
-      renderWallet();
-      loadQuote();
-      loadOrders();
-      if (!fields.disabled && !form.hidden) size.focus();
-    } catch (failure) {
-      error.textContent = failureText(failure, "Polymarket sign-in failed. Verify the profile wallet and try again.");
-      status.textContent = "";
-    } finally {
-      enable.disabled = false;
-      funder.readOnly = Boolean(session);
-    }
-  });
-  $("[data-disconnect]").addEventListener("click", disconnect);
   refresh.addEventListener("click", () => loadOrders());
   function changeDraft() {
     price.value = "";
@@ -532,7 +587,12 @@ export function open(position, {sell = false, savedWallet = "", dock, parent, on
   form.addEventListener("input", updateEstimate);
   form.addEventListener("submit", (event) => {
     event.preventDefault();
-    if (!session || !book || uncertain() || submitting) return;
+    if (uncertain() || submitting) return;
+    if (!session) {
+      openWalletSettings("Connect MetaMask and enable trading to continue.");
+      return;
+    }
+    if (!book) return;
     error.textContent = "";
     try {
       const selected = market.outcomes[outcomeIndex];
@@ -564,11 +624,11 @@ export function open(position, {sell = false, savedWallet = "", dock, parent, on
     const wallet = session;
     const selected = market.outcomes[outcomeIndex];
     submitting = true;
-    close.disabled = submit.disabled = $("[data-edit]").disabled = $("[data-disconnect]").disabled = true;
+    close.disabled = submit.disabled = $("[data-edit]").disabled = true;
     receipt.hidden = true;
     let dispatched = false;
     error.textContent = "";
-    status.textContent = "Checking the market and your trading balance…";
+    status.textContent = "Checking order…";
     try {
       await verifyEligibility();
       const latest = await marketFor(position.slug);
@@ -579,22 +639,25 @@ export function open(position, {sell = false, savedWallet = "", dock, parent, on
       recheckOrder(latest, await bookFor(latest, current), current, approved);
       const funds = await balanceFor(wallet, approved.side, current);
       const needed = approved.side === OrderSide.BUY ? (approved.budget ?? approved.notional) : approved.quantity;
-      if (funds.balance < needed) throw new TicketError(approved.side === OrderSide.BUY
-        ? "Insufficient pUSD in the trading wallet." : "Insufficient shares in the trading wallet.");
+      if (funds.balance < needed) throw new WalletError(approved.side === OrderSide.BUY
+        ? "Insufficient pUSD. Add funds on Polymarket or reduce the order." : "You don’t have enough shares. Check the wallet or reduce the order.");
       const allowance = Object.entries(funds.allowances).find(([address]) => address.toLowerCase() === approved.exchange)?.[1];
       if (allowance !== undefined && allowance < needed) {
-        throw new TicketError("Trading allowance is insufficient. Set it up on Polymarket before submitting.");
+        throw new WalletError("Trading allowance is insufficient. Update your approvals on Polymarket before submitting.");
       }
-      if (wallet !== session) throw new TicketError("The trading wallet changed. Reconnect before submitting.");
+      if (wallet !== session) throw new WalletError("The trading wallet changed. Reconnect before submitting.", true);
       status.textContent = "Review and sign the order in MetaMask.";
       const response = await placeOrder(wallet, approved, () => {
-        if (wallet !== session || !isOpen()) throw new TicketError("The trading context changed. Review the order again.");
+        if (wallet !== session) throw new WalletError("The trading wallet changed. Reconnect before submitting.", true);
+        if (!isOpen()) throw new TicketError("The trading context changed. Review the order again.");
         dispatched = true;
         status.textContent = "Waiting for Polymarket to confirm the order…";
       });
       if (!response.ok) {
         dispatched = false;
-        const reason = String(response.code || "").replace(/_/g, " ").toLowerCase();
+        const code = String(response.code || "");
+        if (/balance|allowance/i.test(code)) throw new WalletError("Polymarket rejected the order because of balance or approvals.");
+        const reason = code.replace(/_/g, " ").toLowerCase();
         throw new TicketError("Polymarket rejected the order" + (reason ? " (" + reason + ")." : "."));
       }
       const label = {live: "Open", matched: "Matched · settlement pending", delayed: "Accepted · matching delayed",
@@ -609,7 +672,11 @@ export function open(position, {sell = false, savedWallet = "", dock, parent, on
       loadQuote();
     } catch (failure) {
       status.textContent = "";
-      if (dispatched) {
+      const issue = walletIssue(failure);
+      if (issue) {
+        if (issue.reconnect && wallet === connected?.session) disconnect();
+        openWalletSettings(issue.message);
+      } else if (dispatched) {
         uncertainOrders.add(orderKey(wallet));
         resetReview();
         error.textContent = unknownOrderMessage;
@@ -619,13 +686,11 @@ export function open(position, {sell = false, savedWallet = "", dock, parent, on
       }
     } finally {
       submitting = false;
-      close.disabled = submit.disabled = $("[data-edit]").disabled = $("[data-disconnect]").disabled = false;
+      close.disabled = submit.disabled = $("[data-edit]").disabled = false;
       renderWallet();
     }
   });
 
-  if (connected) funder.value = session?.wallet || savedFunder(connected.address) ||
-    (addressPattern.test(savedWallet) ? savedWallet : connected.address);
   renderWallet();
   if (docked) {
     dock.append(dialog);

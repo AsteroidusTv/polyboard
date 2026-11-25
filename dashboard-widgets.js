@@ -899,6 +899,10 @@ const DashboardWidgets = (() => {
       <div class="activity-workspace">
         <div class="activity-body" id="activity-body">
           <div id="activity-chart" class="market-chart"></div>
+          <section id="activity-related" class="activity-related" aria-labelledby="activity-related-heading" hidden>
+            <h3 id="activity-related-heading">Other markets in this event</h3>
+            <ul></ul>
+          </section>
           <div id="activity-transactions">
             <h3 id="transactions-heading">Transactions</h3>
             <table id="activity-table" aria-labelledby="transactions-heading" hidden>
@@ -1032,7 +1036,6 @@ const DashboardWidgets = (() => {
         if (!dialog.open || trade.onclick !== current) return;
         detail.ticket = ticket.open(position, {
           sell: !preview && position.status === "open",
-          savedWallet: DashboardSettings.wallet,
           dock: dialog.querySelector("#activity-order"),
           parent: dialog,
           onClose() {
@@ -1119,7 +1122,7 @@ const DashboardWidgets = (() => {
     const event = preview?.event_slug || position.event_slug;
     if (valid(slug) && valid(event)) {
       link.href = url(event);
-      return;
+      return event;
     }
     const search = "https://polymarket.com/search?" + new URLSearchParams({q: position.title || slug || ""});
     link.href = search;
@@ -1129,17 +1132,64 @@ const DashboardWidgets = (() => {
       if (signal.aborted || link.dataset.slug !== slug) return;
       const parent = markets?.[slug]?.event_slug;
       if (markets?.[slug]) link.href = valid(parent) ? url(parent) : url(slug);
+      if (valid(parent)) return parent;
     } catch {
       // Search remains available when metadata is temporarily unavailable.
     }
   }
 
-  function openMarket(market) {
-    const {title, slug, token_id = market.yes_token, condition_id} = market;
-    return openPosition({title, slug, token_id, condition_id}, undefined, {preview: market});
+  async function relatedMarkets(dialog, current, preview, eventSlug, signal) {
+    const section = dialog.querySelector("#activity-related");
+    const list = section.querySelector("ul");
+    section.hidden = true;
+    list.replaceChildren();
+    section.dataset.market = current.slug || "";
+    if (!current.slug || current.is_combo) return;
+    const stillCurrent = () => !signal.aborted && section.dataset.market === current.slug;
+    try {
+      const slug = await eventSlug;
+      if (!slug || !stillCurrent()) return;
+      const event = preview?.relatedEvent || (await json("/api/markets", {event: slug}, signal))
+        .events.find((item) => item.slug === slug);
+      if (!stillCurrent() || !event) return;
+      const related = event.markets.filter((item) => item.slug !== current.slug);
+      for (const market of related) {
+        const item = node("li");
+        const choice = node("button", undefined, "activity-related-row");
+        choice.type = "button";
+        choice.title = market.title;
+        const label = node("strong", market.label || market.title);
+        const prices = node("span", undefined, "activity-related-prices");
+        for (const outcome of market.outcomes) {
+          const quote = node("span", outcome.label + " " + (Number.isFinite(outcome.price) ? formatPrice(outcome.price) : "—"));
+          prices.append(quote);
+        }
+        choice.append(label, prices);
+        choice.addEventListener("click", () => {
+          if (!stillCurrent() || detail.ticket?.busy) return;
+          const keepTrade = Boolean(detail.ticket);
+          if (preview?.onRelatedMarket) {
+            preview.onRelatedMarket(market, event, keepTrade);
+          } else {
+            openMarket({...market, event_slug: event.slug, event_title: event.title, relatedEvent: event,
+              onClose: detail.onClose}, keepTrade);
+          }
+        });
+        item.append(choice);
+        list.append(item);
+      }
+      section.hidden = !related.length;
+    } catch {
+      // Market details remain usable if the event catalogue is unavailable.
+    }
   }
 
-  async function openPosition(position, wallet, {summary, fill, preview} = {}) {
+  function openMarket(market, keepTrade = false) {
+    const {title, slug, token_id = market.yes_token, condition_id} = market;
+    return openPosition({title, slug, token_id, condition_id}, undefined, {preview: market, keepTrade});
+  }
+
+  async function openPosition(position, wallet, {summary, fill, preview, keepTrade} = {}) {
     detail ||= positionDialog();
     if (detail.ticket && !detail.ticket.close()) return;
     detailRequest?.abort();
@@ -1159,13 +1209,16 @@ const DashboardWidgets = (() => {
     const heading = preview ? (preview.outcomes?.[0]?.label || "Yes") + " price history" : undefined;
     const emptyHistory = {heading, points: [], markers: []};
     positionHeader(dialog, position, null, preview);
-    positionLink(dialog, position, preview, request.signal);
+    const eventSlug = positionLink(dialog, position, preview, request.signal);
+    relatedMarkets(dialog, position, preview, eventSlug, request.signal);
     dialog.querySelector("#activity-transactions").hidden = Boolean(preview);
     let history = [...(position.executions || [])].sort((a, b) => b.timestamp - a.timestamp);
     if (!preview) transactions(dialog, history, wallet ? "Loading transactions…" : "");
     panel.show("Loading market prices…", emptyHistory);
     if (!dialog.open) dialog.showModal();
     dialog.querySelector("#activity-body").scrollTop = 0;
+    const trade = dialog.querySelector("#activity-trade");
+    if (keepTrade && !trade.hidden) trade.click();
 
     if (preview && !/^\d{1,78}$/.test(position.token_id || "")) {
       panel.show("Price history unavailable", emptyHistory);
@@ -1180,6 +1233,7 @@ const DashboardWidgets = (() => {
       summary
     ]);
     if (request.signal.aborted) return;
+    const requestedSlug = position.slug;
     if (fullPosition) {
       position = {...position, ...fullPosition, slug: fullPosition.slug || position.slug,
         settlement_price: fullPosition.settlement_price ?? position.settlement_price};
@@ -1195,7 +1249,8 @@ const DashboardWidgets = (() => {
     if (!preview) transactions(dialog, history, wallet && !market.executions ? "Transactions couldn’t load for this market." : "", hasHistory);
     if (fullPosition) {
       positionHeader(dialog, position, market);
-      positionLink(dialog, position, preview, request.signal);
+      const fullEventSlug = positionLink(dialog, position, preview, request.signal);
+      if (position.slug !== requestedSlug) relatedMarkets(dialog, position, preview, fullEventSlug, request.signal);
     }
     else if (!preview) positionHeader(dialog, position, market);
     if (!hasHistory) {

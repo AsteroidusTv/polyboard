@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {marketIntent, OrderSide, orderIntent, orderPreview, recheckOrder, verifyOrderSignature} from "./client.js";
+import {currentSigner, marketIntent, OrderSide, orderIntent, orderPreview, recheckOrder, verifyOrderSignature, WalletError} from "./client.js";
 
 const market = {version: "v1"};
 const book = {tickSize: 0.01, minOrderSize: "5", negRisk: false};
@@ -90,4 +90,14 @@ test("payout and profit stay distinct and sell proceeds account for fees", () =>
   assert.equal(limit.payoff, 10000000n);
   assert.equal(limit.profitIfWin, 4800000n);
   assert.equal(limit.fee, null);
+});
+
+test("an unavailable or different MetaMask account requires reconnecting", async () => {
+  const provider = (accounts, chainId) => ({request: async ({method}) =>
+    method === "eth_accounts" ? accounts : chainId});
+  await currentSigner(provider([wallet], "0x89"), wallet);
+  for (const source of [provider([], "0x89"), provider([wallet], "0x1"),
+    {request: async () => { throw new Error("Provider unavailable"); }}]) {
+    await assert.rejects(currentSigner(source, wallet), (failure) => failure instanceof WalletError && failure.reconnect);
+  }
 });

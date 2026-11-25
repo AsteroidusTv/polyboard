@@ -267,18 +267,21 @@
     return image;
   }
 
-  function showMarket(market, event) {
+  function showMarket(market, event, {keepTrade, relatedEvent} = {}) {
     restoreRequest?.abort();
     const selection = {event: event.slug, market: market.slug, overview: eventDialog.open};
     updateLocation(state, true, selection);
     DashboardWidgets.openMarket({
       ...market, image: market.image || event.image, event_title: event.title, event_slug: event.slug,
-      catalog_query: location.search,
+      catalog_query: location.search, relatedEvent,
+      onRelatedMarket(next, fullEvent, tradeOpen) {
+        showMarket(next, fullEvent, {keepTrade: tradeOpen, relatedEvent: fullEvent});
+      },
       onClose() {
         if (pane.hidden || new URLSearchParams(location.search).get("market") !== market.slug) return;
         updateLocation(state, true, eventDialog.open ? {event: event.slug} : undefined);
       }
-    });
+    }, keepTrade);
   }
 
   async function restoreSelection(selection) {

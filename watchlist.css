@@ -178,15 +178,10 @@
 .resolution-analysis > button { margin-bottom: 6px; }
 
 .order-ticket { width: min(590px, calc(100% - 24px)); }
-.order-ticket-market, .order-address { overflow-wrap: anywhere; }
+.order-ticket-market { overflow-wrap: anywhere; }
 .order-ticket .watch-dialog-body { display: grid; gap: 12px; }
-.order-ticket [role="status"]:empty, .order-ticket [data-balance]:empty { display: none; }
-.order-wallet { display: grid; gap: 7px; }
-.order-wallet a { color: #c6d1ff; }
-.order-wallet label { margin-top: 6px; }
-.order-wallet .text-button { min-height: 32px; height: auto; }
+.order-ticket [role="status"]:empty { display: none; }
 .order-inline { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
-.order-inline #order-funder { flex: 1 1 225px; min-width: 0; }
 .order-ticket :is(input, select) {
   width: 100%;
   min-width: 0;
@@ -229,8 +224,6 @@
 .order-open ul { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
 .order-open li { display: flex; justify-content: space-between; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); padding: 4px 0; }
 .order-open small { display: block; }
-.order-wallet [data-wallet-setup]:not([hidden]) + [data-disconnect] { margin-top: 5px; }
-.order-address { display: inline-block; font-size: .83rem; }
 
 .activity-workspace {
   display: grid;
@@ -292,3 +285,28 @@
 .order-statistics dd { margin-top: 0; font-size: .87rem; }
 .order-review .order-estimate { margin-top: 3px; }
 .order-fields #order-size, .order-fields #order-price { height: 44px; font-variant-numeric: tabular-nums; font-weight: 650; }
+
+.activity-related { margin-top: 16px; }
+.activity-related h3 { margin-bottom: 7px; font-size: .94rem; }
+.activity-related ul { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.activity-related-row {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 5px 10px;
+  width: 100%; min-height: 38px; height: auto; padding: 6px 9px; text-align: start;
+  background: #151d2a; color: inherit; font-size: .84rem;
+}
+.activity-related-row:hover { background: #222d44; }
+.activity-related-prices { display: flex; gap: 7px; flex-wrap: wrap; font-weight: 500; color: var(--muted); }
+.activity-related-prices span { margin: 0; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+.settings-trading-controls { display: grid; justify-items: start; gap: 7px; font-size: .83rem; }
+.settings-trading-controls [data-account] { width: 100%; }
+.settings-trading-controls [data-wallet-setup] { margin-top: 6px; }
+.settings-trading-controls .trading-signer { overflow-wrap: anywhere; }
+.settings-trading-controls a { color: #c6d1ff; }
+.settings-trading-controls [role]:empty, .settings-trading-controls [data-trading-balance]:empty { display: none; }
+.settings-trading-controls [data-disconnect] { height: 32px; padding-inline: 0; }
+#settings-trading-funder {
+  flex: 1 1 225px; width: 100%; min-width: 0; height: 40px;
+  border: 1px solid var(--border); border-radius: 8px; padding: 0 10px;
+  background: #151d2c; color: inherit; font: .82rem ui-monospace, monospace;
+}

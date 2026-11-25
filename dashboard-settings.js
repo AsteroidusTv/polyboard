@@ -35,13 +35,20 @@ const DashboardSettings = (() => {
     </div>
     <div class="settings-body">
       <section class="settings-section" aria-labelledby="settings-wallet-title">
-        <h3 id="settings-wallet-title">Wallet</h3>
+        <h3 id="settings-wallet-title">Portfolio wallet</h3>
         <form id="settings-wallet-form" class="settings-form" novalidate>
           <label for="wallet">Public wallet address</label>
           <input id="wallet" name="wallet" type="text" placeholder="0x…" spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="settings-wallet-error">
           <p id="settings-wallet-error" role="alert" class="negative" hidden></p>
           <button type="submit">Apply wallet</button>
         </form>
+      </section>
+      <section class="settings-section" id="settings-trading" aria-labelledby="settings-trading-title">
+        <h3 id="settings-trading-title" tabindex="-1">Trading wallet</h3>
+        <p id="settings-trading-notice" class="settings-message negative" role="alert" tabindex="-1" hidden></p>
+        <div id="settings-trading-controls" class="settings-trading-controls">
+          <p class="muted settings-message" role="status">Loading trading wallet…</p>
+        </div>
       </section>
       <section class="settings-section" id="settings-codex" aria-labelledby="settings-codex-title">
         <div class="settings-section-heading">
@@ -84,6 +91,7 @@ const DashboardSettings = (() => {
   let signedIn = false;
   let checking;
   let changingSession = false;
+  let tradingSettings;
 
   async function reviewRequest(url, options = {}) {
     const timeout = AbortSignal.timeout(15000);
@@ -126,16 +134,37 @@ const DashboardSettings = (() => {
     }).finally(() => { checking = null; });
   }
 
-  function open(section = "wallet") {
-    if (dialog.open) return;
-    walletInput.value = wallet;
-    walletInput.removeAttribute("aria-invalid");
-    keyInput.removeAttribute("aria-invalid");
-    walletError.hidden = true;
-    dialog.showModal();
-    find("settings-wallet-title").closest(".settings-body").scrollTop = 0;
+  function loadTradingSettings() {
+    const controls = find("settings-trading-controls");
+    tradingSettings ||= import("/order-ticket.js")
+      .then((ticket) => ticket.mountWalletSettings(controls, () => wallet))
+      .catch(() => {
+        controls.textContent = "Trading settings couldn’t load. Reopen Settings to try again.";
+        tradingSettings = undefined;
+      });
+    tradingSettings.then((refresh) => { if (dialog.open) refresh?.(); });
+  }
+
+  function open(section = "wallet", message = "") {
+    if (!dialog.open) {
+      walletInput.value = wallet;
+      walletInput.removeAttribute("aria-invalid");
+      keyInput.removeAttribute("aria-invalid");
+      walletError.hidden = true;
+      dialog.showModal();
+      find("settings-wallet-title").closest(".settings-body").scrollTop = 0;
+      checkSession();
+    }
+    const notice = find("settings-trading-notice");
+    notice.textContent = message;
+    notice.hidden = !message;
     if (section === "codex") find("settings-codex").scrollIntoView({block: "nearest"});
-    checkSession();
+    if (section === "trading") {
+      find("settings-trading").scrollIntoView({block: "start"});
+      const focus = message ? notice : find("settings-trading-title");
+      focus.focus({preventScroll: true});
+    }
+    loadTradingSettings();
   }
 
   for (const trigger of document.querySelectorAll("[data-open-settings]")) {

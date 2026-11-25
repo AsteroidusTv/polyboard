@@ -14,6 +14,13 @@ const zero = "0x" + "0".repeat(64);
 
 export class TicketError extends Error {}
 
+export class WalletError extends TicketError {
+  constructor(message, reconnect = false) {
+    super(message);
+    this.reconnect = reconnect;
+  }
+}
+
 function assert(condition, message) {
   if (!condition) throw new TicketError(message);
 }
@@ -47,11 +54,18 @@ export async function verifyEligibility() {
 }
 
 export async function currentSigner(provider, address) {
-  const [accounts, chain] = await Promise.all([
-    provider.request({method: "eth_accounts"}), provider.request({method: "eth_chainId"})
-  ]);
-  assert(Number(chain) === polygon, "Switch MetaMask to Polygon and reconnect.");
-  assert(lower(accounts?.[0]) === lower(address), "The selected MetaMask account changed. Reconnect to continue.");
+  let accounts, chain;
+  try {
+    [accounts, chain] = await Promise.all([
+      provider.request({method: "eth_accounts"}), provider.request({method: "eth_chainId"})
+    ]);
+  } catch {
+    throw new WalletError("MetaMask is unavailable. Unlock it and reconnect.", true);
+  }
+  if (Number(chain) !== polygon) throw new WalletError("Switch MetaMask to Polygon and reconnect.", true);
+  if (lower(accounts?.[0]) !== lower(address)) {
+    throw new WalletError("The selected MetaMask account changed. Reconnect to continue.", true);
+  }
 }
 
 export async function connectWallet(provider) {
