@@ -178,6 +178,7 @@
 .resolution-analysis > button { margin-bottom: 6px; }
 
 .order-ticket { width: min(590px, calc(100% - 24px)); }
+.order-ticket .watch-dialog-head { align-items: center; }
 .order-ticket-market { overflow-wrap: anywhere; }
 .order-ticket .watch-dialog-body { display: grid; gap: 12px; }
 .order-ticket [role="status"]:empty { display: none; }
