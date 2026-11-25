@@ -3,6 +3,7 @@
 const DashboardWidgets = (() => {
   const statuses = {open: "Open", won: "Profitable", lost: "Unprofitable", even: "Break-even", unknown: "Incomplete"};
   const price = new Intl.NumberFormat("en-US", {maximumFractionDigits: 2});
+  const percent = new Intl.NumberFormat("en-US", {style: "percent", maximumFractionDigits: 2});
   const shares = new Intl.NumberFormat("en-US", {minimumFractionDigits: 1, maximumFractionDigits: 1});
   const dollars = new Intl.NumberFormat("en-US", {style: "currency", currency: "USD"});
   const signedDollars = new Intl.NumberFormat("en-US", {style: "currency", currency: "USD", signDisplay: "exceptZero"});
@@ -1161,7 +1162,7 @@ const DashboardWidgets = (() => {
         const label = node("strong", market.label || market.title);
         const prices = node("span", undefined, "activity-related-prices");
         for (const outcome of market.outcomes) {
-          const quote = node("span", outcome.label + " " + (Number.isFinite(outcome.price) ? formatPrice(outcome.price) : "—"));
+          const quote = node("span", outcome.label + " " + (Number.isFinite(outcome.price) ? percent.format(outcome.price) : "—"));
           prices.append(quote);
         }
         choice.append(label, prices);
