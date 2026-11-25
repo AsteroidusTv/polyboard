@@ -38,7 +38,19 @@
 }
 .activity-actions { grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
 .activity-actions :is(button, a) { height: auto; min-height: 36px; padding: 5px 10px; font-size: .81rem; white-space: normal; }
-.activity-actions .activity-external { margin-inline-start: auto; }
+#activity-tools-toggle { margin-inline-start: auto; white-space: nowrap; }
+#activity-tools {
+  max-inline-size: calc(100vw - 28px);
+  max-block-size: min(360px, 80dvh);
+  overflow: auto;
+}
+#activity-tools a { display: flex; align-items: center; text-decoration: none; }
+#activity-tools #activity-polymarket {
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+  border-start-start-radius: 0;
+  border-start-end-radius: 0;
+}
 .activity-actions p { flex-basis: 100%; font-size: .82rem; }
 #activity-follow[aria-pressed="true"] { background: #252e49; border-color: #586b9e; color: #d9e2ff; }
 .chart-legend .legend-alert::before { width: 15px; height: 0; border-radius: 0; border-top: 2px dashed #ffbd83; background: none; }
@@ -128,9 +140,8 @@
 .watch-notice time { max-width: 100px; text-align: end; flex-shrink: 0; font-size: .74rem; }
 
 @media (max-width: 530px) {
-  .activity-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .activity-actions .activity-external { margin-inline-start: 0; }
-  .activity-actions p { grid-column: 1 / -1; }
+  .activity-actions { column-gap: 5px; }
+  .activity-actions > button { padding-inline: 7px; }
   .watch-alert-fields { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: no-preference) {

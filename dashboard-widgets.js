@@ -884,12 +884,15 @@ const DashboardWidgets = (() => {
         <div class="activity-actions">
           <button type="button" id="activity-trade" aria-haspopup="dialog" hidden>Trade</button>
           <button type="button" class="secondary-button" id="activity-follow" hidden>Follow</button>
-          <button type="button" class="secondary-button" id="activity-alert" hidden>Add alert</button>
-          <button type="button" class="text-button" id="activity-journal" aria-haspopup="dialog" hidden>Trade journal</button>
-          <button type="button" class="text-button" id="activity-resolution" aria-haspopup="dialog" hidden>Check resolution</button>
-          <a class="secondary-button button-link" id="activity-precedents" hidden>Compare with past markets</a>
-          <a class="secondary-button button-link" id="activity-holders" hidden>Holder analysis</a>
-          <a class="secondary-button button-link activity-external" id="activity-polymarket" target="_blank" rel="noopener noreferrer">Open on Polymarket ↗</a>
+          <button type="button" class="secondary-button" id="activity-tools-toggle" popovertarget="activity-tools">Market tools</button>
+          <div id="activity-tools" popover role="group" aria-label="Market tools">
+            <button type="button" class="text-button" id="activity-alert" aria-haspopup="dialog" hidden>Add alert</button>
+            <button type="button" class="text-button" id="activity-journal" aria-haspopup="dialog" hidden>Trade journal</button>
+            <button type="button" class="text-button" id="activity-resolution" aria-haspopup="dialog" hidden>Check resolution</button>
+            <a class="text-button" id="activity-precedents" hidden>Compare with past markets</a>
+            <a class="text-button" id="activity-holders" hidden>Holder analysis</a>
+            <a class="text-button" id="activity-polymarket" target="_blank" rel="noopener noreferrer">Open on Polymarket ↗</a>
+          </div>
           <p id="activity-watch-error" class="negative" role="alert"></p>
         </div>
       </header>
@@ -923,19 +926,30 @@ const DashboardWidgets = (() => {
       const row = event.target.closest("[data-trade-index]");
       if (row) panel.selectTrade(Number(row.dataset.tradeIndex));
     });
+    const tools = dialog.querySelector("#activity-tools");
+    const toolsToggle = dialog.querySelector("#activity-tools-toggle");
+    function closeTools() {
+      tools.hidePopover();
+      toolsToggle.focus();
+    }
+    tools.addEventListener("click", (event) => {
+      if (event.target.closest("button, a")) closeTools();
+    }, {capture: true});
     dialog.addEventListener("keydown", (event) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
       // Restoring an event and a market together can group their native close requests.
       event.preventDefault();
-      dialog.close();
+      if (tools.matches(":popover-open")) closeTools();
+      else dialog.close();
     });
     dialog.addEventListener("close", () => {
       if (dialog.open) return;
+      tools.hidePopover();
       detailRequest?.abort();
       detail.onClose?.();
     });
     document.querySelector("main").append(dialog);
-    return {dialog, panel};
+    return {dialog, panel, tools};
   }
 
   function transactions(dialog, history, message, chartReady = false) {
@@ -1101,7 +1115,8 @@ const DashboardWidgets = (() => {
     detailRequest?.abort();
     const request = new AbortController();
     detailRequest = request;
-    const {dialog, panel} = detail;
+    const {dialog, panel, tools} = detail;
+    tools.hidePopover();
     dialog.dataset.market = position.slug || "";
     detail.onClose = preview?.onClose;
     if (!preview && ["/", "/trades"].includes(location.pathname) && positionToken.test(position.token_id || "")) {
