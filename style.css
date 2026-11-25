@@ -57,16 +57,21 @@ section { margin-top: 24px; }
 .info-trigger:hover, .info-trigger[aria-expanded="true"] { background: var(--surface); color: #c8d3ff; }
 #positions-info .info-trigger { width: 32px; padding: 0; }
 .info-bubble {
-  position: absolute;
+  position: fixed;
   z-index: 2;
-  inset: calc(100% + 6px) auto auto 0;
-  width: min(24rem, calc(100vw - 48px));
+  inset: auto;
+  width: 24rem;
+  margin: 0;
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: #1a2236;
+  color: inherit;
   box-shadow: 0 6px 18px #06080e80;
   font-size: .85rem;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  overscroll-behavior: contain;
 }
 .positions-heading { align-items: center; }
 .section-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
@@ -158,7 +163,6 @@ tbody tr:nth-child(odd) { --position-background: var(--surface); }
 .fee-heading { display: flex; align-items: center; gap: 3px; }
 .fee-heading h2 { font-size: .92rem; }
 .fee-heading .info-trigger:hover, .fee-heading .info-trigger[aria-expanded="true"] { background: #252e49; }
-.fee-summary .info-bubble { left: 0; width: min(24rem, 100%); }
 .fee-totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 20px; flex: 0 1 20rem; }
 .fee-totals dd { margin-top: 0; font-size: 1rem; }
 .fee-totals div:first-child dd { font-size: 1.1rem; }
@@ -166,7 +170,6 @@ tbody tr:nth-child(odd) { --position-background: var(--surface); }
 .trade-controls input, .trade-controls select { width: 100%; min-width: 0; height: 44px; padding: 0 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); color: inherit; font: inherit; }
 .trade-controls input::placeholder { color: var(--muted); }
 .history-meta { position: relative; display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; margin: 14px 0 10px; font-size: .85rem; }
-#history-method .info-bubble { left: auto; right: 0; width: min(24rem, 100%); }
 .history-market-title { height: auto; padding: 0; border: 0; border-radius: 4px; background: transparent; color: inherit; text-align: left; font: inherit; font-weight: 600; }
 .history-market-title:hover { background: transparent; color: #c8d3ff; }
 .history-market-title .history-market-arrow { margin-inline: 6px 0; color: var(--muted); }
@@ -479,7 +482,7 @@ button.chart-trade-row:is(:hover, :focus-visible) { background: #26324b; outline
 .precedent-target-links { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 12px; margin: 3px 0 0 52px; }
 .precedent-target-links .precedent-link { font-size: .8rem; }
 .precedent-target-links .info-trigger { height: auto; min-height: 28px; padding: 2px 7px; font-size: .8rem; }
-#precedent-rules { width: min(36rem, 100%); }
+#precedent-rules { width: 36rem; }
 #precedent-rules .precedent-link { display: inline-block; margin-top: 5px; }
 .precedent-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .precedent-scope { flex-shrink: 0; }
@@ -511,7 +514,6 @@ button.chart-trade-row:is(:hover, :focus-visible) { background: #26324b; outline
 .precedent-verdict p, #precedent-count { font-size: .83rem; }
 #precedent-details { margin-top: 22px; }
 #precedent-details .section-heading { position: relative; align-items: center; }
-#precedent-details .info-bubble { width: min(24rem, calc(100vw - 42px)); }
 .precedent-matrix-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
 #precedent-horizon-toggle { height: 34px; padding-inline: 10px; font-size: .82rem; }
 #precedent-horizon-form { display: grid; gap: 10px; }
@@ -535,7 +537,6 @@ button.chart-trade-row:is(:hover, :focus-visible) { background: #26324b; outline
 .precedent-horizon-choice small { font-weight: 500; }
 .calibration-heading { display: flex; align-items: center; gap: 4px; }
 .calibration-heading .info-trigger { width: 32px; }
-#precedent-details #calibration-help { left: 0; width: min(24rem, calc(100vw - 42px)); }
 #precedent-table { table-layout: fixed; }
 .precedent-market-column { width: 30%; }
 .precedent-outcome-column { width: 12%; }
@@ -695,7 +696,7 @@ button.chart-trade-row:is(:hover, :focus-visible) { background: #26324b; outline
     animation: dashboard-rise 220ms var(--motion-ease);
   }
   .chart-plot:not([hidden]) { animation: dashboard-fade 240ms ease-out; }
-  .info-bubble:not([hidden]) { animation: dashboard-rise 145ms var(--motion-ease); }
+  .info-bubble:not([hidden]) { animation: dashboard-fade 145ms ease-out; }
 
   :is(#review-dialog, #position-dialog, #risk-dialog) { --dialog-entry: translateY(8px) scale(.985); }
   #settings-dialog { --dialog-entry: translateX(42px); }

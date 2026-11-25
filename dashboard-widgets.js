@@ -1276,22 +1276,97 @@ const DashboardWidgets = (() => {
     }
   }
 
-  for (const group of document.querySelectorAll(".chart-ranges, .history-tabs")) slidingSelection(group);
-  for (const trigger of document.querySelectorAll("[data-info-trigger]")) {
-    const wrapper = trigger.closest(".info-control");
-    const tip = document.getElementById(trigger.getAttribute("aria-controls"));
-    const toggle = (open) => {
-      trigger.setAttribute("aria-expanded", open);
-      tip.hidden = !open;
-    };
-    trigger.addEventListener("click", () => toggle(tip.hidden));
-    wrapper.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && !tip.hidden) toggle(false);
+  function bindInfoBubbles() {
+    const triggers = document.querySelectorAll("[data-info-trigger]");
+    if (!triggers.length) return;
+
+    const viewport = window.visualViewport;
+    const margin = 12;
+    const gap = 6;
+    let active;
+    const observer = new ResizeObserver(position);
+
+    function close() {
+      const {trigger, tip} = active;
+      active = null;
+      observer.disconnect();
+      tip.hidePopover?.();
+      tip.hidden = true;
+      trigger.setAttribute("aria-expanded", "false");
+    }
+
+    function position() {
+      if (!active) return;
+      const {trigger, tip} = active;
+      const root = document.documentElement;
+      const viewportLeft = viewport?.offsetLeft ?? 0;
+      const viewportTop = viewport?.offsetTop ?? 0;
+      const width = Math.min(root.clientWidth, viewport?.width ?? root.clientWidth);
+      const height = Math.min(root.clientHeight, viewport?.height ?? root.clientHeight);
+      const box = trigger.getBoundingClientRect();
+      if (tip.hidden || !box.width || box.bottom <= viewportTop || box.top >= viewportTop + height ||
+          box.right <= viewportLeft || box.left >= viewportLeft + width) {
+        close();
+        return;
+      }
+
+      tip.style.maxWidth = (width - margin * 2) + "px";
+      const tipWidth = tip.offsetWidth;
+      const contentHeight = tip.scrollHeight + tip.offsetHeight - tip.clientHeight;
+      const top = viewportTop + margin;
+      const right = viewportLeft + width - margin;
+      const below = viewportTop + height - margin - box.bottom - gap;
+      const above = box.top - gap - top;
+      const openAbove = contentHeight > below && above > below;
+      tip.style.maxHeight = Math.max(0, openAbove ? above : below) + "px";
+      const alignedLeft = box.left + tipWidth <= right ? box.left : box.right - tipWidth;
+      tip.style.left = Math.max(viewportLeft + margin, Math.min(alignedLeft, right - tipWidth)) + "px";
+      tip.style.top = (openAbove ? box.top - gap - tip.offsetHeight : box.bottom + gap) + "px";
+      tip.tabIndex = tip.scrollHeight > tip.clientHeight ? 0 : -1;
+    }
+
+    for (const trigger of triggers) {
+      const tip = document.getElementById(trigger.getAttribute("aria-controls"));
+      // The top layer keeps the bubble clear of clipping and transformed ancestors.
+      if (tip.showPopover) tip.setAttribute("popover", "manual");
+      trigger.addEventListener("click", () => {
+        const wasOpen = active?.trigger === trigger;
+        if (active) close();
+        if (wasOpen) return;
+        active = {trigger, tip};
+        tip.hidden = false;
+        tip.showPopover?.({source: trigger});
+        trigger.setAttribute("aria-expanded", "true");
+        position();
+        if (active) {
+          observer.observe(tip);
+          observer.observe(trigger);
+          observer.observe(document.body);
+        }
+      });
+    }
+    document.addEventListener("keydown", (event) => {
+      if (!active || event.key !== "Escape" || event.defaultPrevented) return;
+      const {trigger, tip} = active;
+      const restoreFocus = tip.contains(document.activeElement);
+      close();
+      if (restoreFocus) trigger.focus({preventScroll: true});
+      event.preventDefault();
     });
     document.addEventListener("pointerdown", (event) => {
-      if (!tip.hidden && !wrapper.contains(event.target)) toggle(false);
+      if (active && !active.trigger.contains(event.target) && !active.tip.contains(event.target)) close();
+    }, true);
+    document.addEventListener("animationend", (event) => {
+      if (active && event.target.contains(active.trigger)) position();
     });
+    window.addEventListener("scroll", position, {capture: true, passive: true});
+    window.addEventListener("resize", position);
+    viewport?.addEventListener("scroll", position);
+    viewport?.addEventListener("resize", position);
   }
+
+  for (const group of document.querySelectorAll(".chart-ranges, .history-tabs")) slidingSelection(group);
+  bindInfoBubbles();
 
   return {portfolio, walletPerformance, openMarket, openPosition, restorePosition, restorePortfolioPosition,
     positionQuery, positionBack, marketTitle, marketImageSource, positionBadges, statuses, softUpdate, slidingSelection, loadOnScroll,

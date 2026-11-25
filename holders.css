@@ -46,7 +46,6 @@
 .holder-progress:indeterminate::-moz-progress-bar { background: transparent; }
 #holder-table-note { margin: 10px 0; }
 .holder-scan-status:empty, #holder-table-note:empty { display: none; }
-.holders-page #holder-method { left: auto; right: 0; }
 #holder-table { margin-top: 8px; table-layout: fixed; border-spacing: 0 5px; }
 #holder-table th { white-space: normal; }
 #holder-table td { padding: 11px 12px; background: #111720; }
