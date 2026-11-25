@@ -40,23 +40,31 @@
     </dl>
     <section id="portfolio-chart" class="portfolio-chart" aria-label="Portfolio performance" hidden></section>
     <section id="portfolio-contributions" class="portfolio-chart" aria-labelledby="contribution-heading" hidden>
-      <div class="chart-header"><h2 id="contribution-heading">Position contributions</h2></div>
-      <div id="contribution-chart"></div>
+      <div class="chart-header">
+        <h2 id="contribution-heading">Position contributions</h2>
+        <button type="button" id="contribution-toggle" class="secondary-button chart-trades-toggle" aria-expanded="false" aria-controls="contribution-chart">Show chart</button>
+      </div>
+      <div id="contribution-chart" hidden></div>
     </section>
     <section aria-labelledby="positions-heading">
-      <div class="section-heading">
-        <div class="positions-title">
-          <h2 id="positions-heading">Open positions <span id="count" hidden></span></h2>
-          <div id="positions-info" class="info-control" hidden>
-            <button type="button" class="info-trigger" data-info-trigger aria-label="Payout and price units" aria-expanded="false" aria-controls="positions-help">ⓘ</button>
-            <p class="info-bubble" id="positions-help" hidden>Open cost basis excludes entry fees. Potential payout is the gross amount if the held outcome wins. Prices are in cents per share. Amounts are in dollars.</p>
+      <div class="section-heading positions-heading">
+        <div>
+          <div class="positions-title">
+            <h2 id="positions-heading">Open positions <span id="count" hidden></span></h2>
+            <div id="positions-info" class="info-control" hidden>
+              <button type="button" class="info-trigger" data-info-trigger aria-label="Payout and price units" aria-expanded="false" aria-controls="positions-help">ⓘ</button>
+              <p class="info-bubble" id="positions-help" hidden>Open cost basis excludes entry fees. Potential payout is the gross amount if the held outcome wins. Prices are in cents per share. Amounts are in dollars.</p>
+            </div>
           </div>
+          <p id="status" class="muted" role="status" aria-atomic="true"></p>
         </div>
         <div class="section-actions">
-          <p id="status" class="muted" role="status" aria-atomic="true"></p>
           <button type="button" id="scenario-toggle" class="secondary-button" aria-expanded="false" aria-controls="scenario-tools scenario-summary" hidden>Simulate outcomes</button>
-          <button type="button" id="review-toggle" class="secondary-button" aria-haspopup="dialog" hidden>Run review</button>
-          <button type="button" id="find-toggle" class="secondary-button" aria-haspopup="dialog" hidden>Personalized picks</button>
+          <button type="button" id="codex-toggle" class="secondary-button" popovertarget="codex-actions" hidden>Codex</button>
+          <div id="codex-actions" popover aria-label="Codex actions" role="group">
+            <button type="button" id="review-toggle" class="text-button" aria-haspopup="dialog" hidden>Portfolio review</button>
+            <button type="button" id="find-toggle" class="text-button" aria-haspopup="dialog" hidden>Personalized picks</button>
+          </div>
         </div>
       </div>
       <p id="error" role="alert" hidden></p>

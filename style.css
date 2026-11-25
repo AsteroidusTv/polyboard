@@ -68,10 +68,31 @@ section { margin-top: 24px; }
   box-shadow: 0 6px 18px #06080e80;
   font-size: .85rem;
 }
-.section-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 14px; }
+.positions-heading { align-items: center; }
+.section-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.section-actions > button { height: 36px; padding-inline: 12px; font-size: .83rem; }
+#codex-actions {
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+  box-shadow: 0 10px 24px #06080e80;
+}
+@supports (position-area: block-end span-inline-start) {
+  #codex-actions {
+    inset: auto;
+    margin: 6px 0;
+    position-area: block-end span-inline-start;
+    justify-self: end;
+    position-try-fallbacks: flip-block, flip-inline;
+  }
+}
+#codex-actions button { display: block; width: 100%; padding-inline: 10px; text-align: start; }
+#portfolio-contributions > .chart-header { align-items: center; }
 h2 { font-size: 1.35rem; letter-spacing: -.022em; }
 #count { display: inline-block; vertical-align: 2px; margin-left: 5px; padding: 1px 8px; border-radius: 16px; background: var(--surface); color: var(--muted); font-size: .8rem; }
-#status { font-size: .83rem; }
+#status { margin-top: 2px; font-size: .8rem; }
+#status:empty { display: none; }
 #error, .empty { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 10px; }
 #error { color: var(--negative); }
 #position-coverage { font-size: .83rem; margin: 0 0 10px; }
@@ -578,15 +599,12 @@ button.chart-trade-row:is(:hover, :focus-visible) { background: #26324b; outline
   .dashboard-page .page-title { margin-bottom: 14px; }
   .portfolio-page #totals { margin-top: 14px; gap: 6px; }
   .portfolio-page .chart-plot canvas { height: clamp(124px, 17vh, 160px); }
-  .portfolio-page .section-actions button { height: 36px; font-size: .79rem; }
-  .portfolio-page #status { order: 1; font-size: .75rem; }
+  .section-actions { gap: 6px; }
+  .section-actions > button { font-size: .79rem; }
   .dashboard-actions { gap: 6px; }
   .dashboard-actions :is(.toolbar-button, .button-link) { padding-inline: 8px; }
   .settings-heading { padding-inline: 13px; }
   .settings-body { padding-inline: 13px; }
-  .section-actions { gap: 6px 8px; width: 100%; }
-  .section-actions button { padding-inline: 12px; }
-  #status:not(:empty) { flex-basis: 100%; }
   .scenario-values { grid-template-columns: 1fr; }
   .scenario-values dd { font-size: 1.2rem; }
   #scenario-others-label { flex-basis: 100%; }

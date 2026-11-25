@@ -424,13 +424,34 @@ const DashboardWidgets = (() => {
     });
   }
 
-  async function contributions(root, wallet, signal, fresh) {
+  function contributions(root, wallet, signal, fresh) {
     const box = root.querySelector("#contribution-chart");
-    const status = node("p", "", "muted");
+    const toggle = root.querySelector("#contribution-toggle");
+    box.replaceChildren();
+    root.hidden = false;
+    let loading;
+
+    function load() {
+      loading ||= loadContributions(box, wallet, signal, fresh).then((loaded) => {
+        if (!loaded) loading = undefined;
+      });
+    }
+
+    toggle.onclick = () => {
+      const open = box.hidden;
+      box.hidden = !open;
+      toggle.setAttribute("aria-expanded", String(open));
+      toggle.textContent = open ? "Close chart" : "Show chart";
+      if (open) load();
+    };
+
+    if (!box.hidden) load();
+  }
+
+  async function loadContributions(box, wallet, signal, fresh) {
+    const status = node("p", "Reconstructing position history…", "muted");
     status.setAttribute("role", "status");
     box.replaceChildren(status);
-    root.hidden = false;
-    status.textContent = "Reconstructing position history…";
     try {
       const params = fresh ? {wallet, fresh: "1"} : {wallet};
       const [{positions, partial}, events] = await Promise.all([
@@ -463,9 +484,10 @@ const DashboardWidgets = (() => {
       if (signal.aborted) return;
       if (!histories.length) {
         status.textContent = partial ? "Position history is incomplete." : "No positions in the last 30 days.";
-        return;
+      } else {
+        contributionChart(box, status, times, histories, partial || !events, wallet, signal);
       }
-      contributionChart(box, status, times, histories, partial || !events, wallet, signal);
+      return true;
     } catch {
       if (!signal.aborted) {
         status.textContent = "Position history couldn’t load. Use Refresh to try again.";

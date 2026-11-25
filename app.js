@@ -17,6 +17,8 @@ const scenarioToggle = byId("scenario-toggle");
 const scenarioModes = [...document.querySelectorAll("[data-scenario-other]")];
 const scenarioClear = byId("scenario-clear");
 const conflict = byId("scenario-conflict");
+const codexToggle = byId("codex-toggle");
+const codexActions = byId("codex-actions");
 const reviewToggle = byId("review-toggle");
 const reviewDialog = byId("review-dialog");
 const findToggle = byId("find-toggle");
@@ -637,7 +639,7 @@ function render(positions) {
   scenarioToggle.hidden = !scenarioReady || !positions.length;
   if (!scenarioReady && positions.length) notice.append(" Some amounts are needed to simulate outcomes.");
   reviewToggle.hidden = !directReview || positions.length === 0;
-  findToggle.hidden = !directReview;
+  codexToggle.hidden = findToggle.hidden = !directReview;
   empty.hidden = positions.length !== 0 || omitted > 0;
   if (scenarioToggle.hidden) setScenarioOpen(false);
   if (!byId("scenario-summary").hidden) syncScenario();
@@ -660,7 +662,8 @@ async function load(fresh = false) {
     setScenarioOthers("current");
     setScenarioOpen(false);
     positionsInfo.hidden = true;
-    findToggle.hidden = reviewToggle.hidden = scenarioToggle.hidden = count.hidden = totals.hidden = results.hidden = empty.hidden = true;
+    codexActions.hidePopover();
+    codexToggle.hidden = findToggle.hidden = reviewToggle.hidden = scenarioToggle.hidden = count.hidden = totals.hidden = results.hidden = empty.hidden = true;
   }
   status.textContent = "Loading positions…";
   const query = new URLSearchParams({wallet: address});
@@ -695,7 +698,6 @@ async function load(fresh = false) {
     error.hidden = false;
   } finally {
     if (request === positionRequest) {
-      positionRequest = null;
       status.textContent = updatedAt;
       refresh.disabled = false;
     }
@@ -749,8 +751,14 @@ function openReview(mode) {
   if (!reviewRun.disabled) monitorReview(false);
 }
 
-reviewToggle.addEventListener("click", () => openReview("review"));
-findToggle.addEventListener("click", () => openReview("discovery"));
+function openCodexAction(mode) {
+  codexActions.hidePopover();
+  codexToggle.focus();
+  openReview(mode);
+}
+
+reviewToggle.addEventListener("click", () => openCodexAction("review"));
+findToggle.addEventListener("click", () => openCodexAction("discovery"));
 byId("review-dismiss").addEventListener("click", () => reviewDialog.close());
 byId("review-form").addEventListener("submit", (event) => {
   event.preventDefault();
