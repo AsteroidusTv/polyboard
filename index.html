@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/watchlist.css">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <script src="/charts.js" defer></script>
+  <script src="/position-contributions.js" defer></script>
   <script src="/dashboard-widgets.js" defer></script>
   <script src="/dashboard-settings.js" defer></script>
   <script src="/watchlist.js" defer></script>
@@ -38,6 +39,10 @@
       <div><dt>Unrealized P&L</dt><dd id="total-pnl"></dd></div>
     </dl>
     <section id="portfolio-chart" class="portfolio-chart" aria-label="Portfolio performance" hidden></section>
+    <details id="portfolio-contributions" class="portfolio-chart" hidden>
+      <summary>Position contributions</summary>
+      <div id="contribution-chart"></div>
+    </details>
     <section aria-labelledby="positions-heading">
       <div class="section-heading">
         <div class="positions-title">

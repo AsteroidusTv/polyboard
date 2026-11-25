@@ -44,6 +44,7 @@ FILES = {
     "/watchlist.js": ("watchlist.js", "text/javascript"),
     "/watchlist-sw.js": ("watchlist-sw.js", "text/javascript"),
     "/risk-check.js": ("risk-check.js", "text/javascript"),
+    "/position-contributions.js": ("position-contributions.js", "text/javascript"),
     "/charts.js": ("charts.js", "text/javascript"),
     "/dashboard-widgets.js": ("dashboard-widgets.js", "text/javascript"),
     "/dashboard-settings.js": ("dashboard-settings.js", "text/javascript"),

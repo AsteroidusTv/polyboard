@@ -59,16 +59,16 @@ const DashboardLineChart = (() => {
   }
 
   return class {
-    static drawComparison(canvas, series, days) {
+    static drawComparison(canvas, series, days, contribution) {
       const width = canvas.clientWidth;
       const height = canvas.clientHeight;
       const ctx = canvas.getContext("2d");
-      if (!width || !height || !ctx || !series.length) return;
-      const first = Math.min(...series.map(({points}) => points[0][0]));
-      const last = Math.max(...series.map(({points}) => points.at(-1)[0]));
+      if (!width || !height || !ctx || (!series.length && !contribution)) return;
+      const first = contribution?.start ?? Math.min(...series.map(({points}) => points[0][0]));
+      const last = contribution?.end ?? Math.max(...series.map(({points}) => points.at(-1)[0]));
       if (last <= first) return;
       const start = days ? Math.max(first, last - days * day) : first;
-      const traces = series.map((item) => {
+      const traces = contribution ? series : series.map((item) => {
         const points = item.points.filter(([timestamp]) => timestamp >= start);
         const edge = valueOnLine(item.points, start);
         if (edge !== undefined && points[0]?.[0] > start) points.unshift([start, edge]);
@@ -79,8 +79,11 @@ const DashboardLineChart = (() => {
       canvas.height = Math.round(height * scale);
       ctx.scale(scale, scale);
       ctx.font = "11px system-ui, sans-serif";
-      const format = new Intl.NumberFormat("en-US", {style: "percent", maximumFractionDigits: 2});
-      const axis = axisBounds([[start, 0], ...traces.flatMap(({points}) => points)], [], true, false);
+      const format = contribution
+        ? new Intl.NumberFormat("en-US", {style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 2})
+        : new Intl.NumberFormat("en-US", {style: "percent", maximumFractionDigits: 2});
+      const axis = axisBounds([[start, 0], ...traces.flatMap(({points}) => points.filter(([, value]) => value !== null))],
+        [], !contribution, false);
       const ticks = [];
       for (let value = axis.min; value <= axis.max + axis.step / 100; value += axis.step) {
         ticks.push([value, format.format(value)]);
@@ -114,15 +117,36 @@ const DashboardLineChart = (() => {
         ctx.textAlign = index === 0 ? "left" : index === divisions ? "right" : "center";
         ctx.fillText(dateFormat.format(time * 1000), x(time), bottom + 14);
       }
+      if (contribution) {
+        const zero = y(0);
+        const cursor = x(contribution.at);
+        ctx.strokeStyle = colors.label;
+        ctx.beginPath();
+        ctx.moveTo(left, zero);
+        ctx.lineTo(right, zero);
+        ctx.moveTo(cursor, top);
+        ctx.lineTo(cursor, bottom);
+        ctx.stroke();
+      }
       for (const trace of traces) {
         if (!trace.visible || !trace.points.length) continue;
         ctx.beginPath();
-        trace.points.forEach(([time, value], index) => ctx[index ? "lineTo" : "moveTo"](x(time), y(value)));
-        ctx.lineWidth = 1.8;
+        let connected = false;
+        for (const [time, value] of trace.points) {
+          if (value === null) {
+            connected = false;
+            continue;
+          }
+          ctx[connected ? "lineTo" : "moveTo"](x(time), y(value));
+          connected = true;
+        }
+        ctx.lineWidth = contribution ? (trace.highlight ? 2.2 : 1) : 1.8;
         ctx.lineJoin = "round";
         ctx.strokeStyle = trace.color;
         ctx.stroke();
-        const [time, value] = trace.points.at(-1);
+        const [time, value] = contribution
+          ? trace.points[contribution.index] : trace.points.at(-1);
+        if (value === null || (contribution && !trace.highlight)) continue;
         ctx.beginPath();
         ctx.arc(x(time), y(value), 2.8, 0, Math.PI * 2);
         ctx.fillStyle = trace.color;

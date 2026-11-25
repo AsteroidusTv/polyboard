@@ -424,6 +424,174 @@ const DashboardWidgets = (() => {
     });
   }
 
+  function contributions(root, wallet, signal, fresh) {
+    const box = root.querySelector("#contribution-chart");
+    const status = node("p", "", "muted");
+    status.setAttribute("role", "status");
+    box.replaceChildren(status);
+    root.hidden = false;
+    let loaded = false;
+    root.ontoggle = load;
+    if (root.open) load();
+
+    async function load() {
+      if (!root.open || loaded || signal.aborted) return;
+      loaded = true;
+      status.textContent = "Reconstructing position history…";
+      try {
+        const params = fresh ? {wallet, fresh: "1"} : {wallet};
+        const [{positions, partial}, events] = await Promise.all([
+          json("/api/trade-summary", params, signal),
+          json("/api/portfolio-events", params, signal).catch(() => null)
+        ]);
+        if (signal.aborted) return;
+        const settlements = new Map((events?.settlements || []).map((item) => [String(item.token_id), item]));
+        const day = 86400;
+        const end = Math.floor(Date.now() / 1000);
+        const times = Array.from({length: 121}, (_, index) => end - (120 - index) * day / 4);
+        const active = positions.filter((position) =>
+          !(position.opened > end) && (position.status === "open" || !position.last_activity ||
+            position.last_activity >= times[0] || settlements.get(String(position.token_id))?.timestamp >= times[0]));
+        const histories = [];
+        let next = 0;
+        await Promise.all(Array.from({length: Math.min(5, active.length)}, async () => {
+          while (next < active.length && !signal.aborted) {
+            const position = active[next++];
+            let points = [];
+            if (position.pnl_source === "cash_flow" && positionToken.test(position.token_id)) {
+              const data = await json("/api/market-history", {token: position.token_id}, signal).catch(() => null);
+              points = data?.points || [];
+            }
+            const values = PositionContributions.history(position, points, settlements.get(String(position.token_id)), times);
+            histories.push({position, values, last: Math.max(position.last_activity || 0,
+              settlements.get(String(position.token_id))?.timestamp || 0)});
+          }
+        }));
+        if (signal.aborted) return;
+        if (!histories.length) {
+          status.textContent = partial ? "Position history is incomplete." : "No positions in the last 30 days.";
+          return;
+        }
+        contributionChart(box, status, times, histories, partial || !events, wallet, signal);
+      } catch {
+        if (!signal.aborted) {
+          loaded = false;
+          status.textContent = "Position history couldn’t load. Reopen this section to retry.";
+        }
+      }
+    }
+  }
+
+  function contributionChart(box, status, times, histories, partial, wallet, signal) {
+    const explanation = node("p", "Change in P&L since the start of the period. Each line groups fills by market outcome.", "muted");
+    const controls = node("div", undefined, "contribution-controls");
+    const range = node("select");
+    range.setAttribute("aria-label", "Contribution period");
+    for (const days of [7, 14, 30]) {
+      const option = node("option", "Last " + days + " days");
+      option.value = days;
+      range.append(option);
+    }
+    const dateLabel = node("output");
+    controls.append(range, dateLabel);
+    const plot = node("div", undefined, "chart-plot");
+    const canvas = node("canvas");
+    canvas.setAttribute("aria-hidden", "true");
+    plot.append(canvas);
+    const scrubber = node("input");
+    scrubber.type = "range";
+    scrubber.min = "0";
+    scrubber.setAttribute("aria-label", "Inspect contributions by date");
+    const rankings = node("div", undefined, "contribution-rankings");
+    box.replaceChildren(explanation, controls, plot, scrubber, rankings, status);
+    let series;
+    let relevant;
+    let start;
+    let geometry;
+    const palette = ["#75e1b4", "#85c9ff", "#d4b0ff", "#ff9aa9", "#ffc28c", "#eadb86"];
+    const stamp = new Intl.DateTimeFormat("en-US", {dateStyle: "medium", timeStyle: "short"});
+
+    function list(title, rows, highlight) {
+      const group = node("div");
+      group.append(node("h3", title));
+      const entries = node("ul");
+      for (const [item, value] of rows.slice(0, 3)) {
+        const row = node("li");
+        const button = marketTitle(item.position, () => openPosition(item.position, wallet));
+        if (item.position.outcome) button.prepend(node("span", item.position.outcome + " · "));
+        button.style.setProperty("--contribution-color", highlight.get(item));
+        row.append(button, node("strong", signedDollars.format(value), value > 0 ? "positive" : "negative"));
+        entries.append(row);
+      }
+      group.append(rows.length ? entries : node("p", "None at this time", "muted"));
+      return group;
+    }
+
+    function draw() {
+      const index = Number(scrubber.value);
+      const at = times[start + index];
+      const available = series.flatMap((item) => {
+        const value = item.points[index][1];
+        return value === null || Math.abs(value) < .005 ? [] : [[item, value]];
+      }).sort((a, b) => b[1] - a[1]);
+      const gains = available.filter(([, value]) => value > 0);
+      const losses = available.filter(([, value]) => value < 0).reverse();
+      const highlight = new Map([...gains.slice(0, 3), ...losses.slice(0, 3)]
+        .map(([item], index) => [item, palette[index]]));
+      const traces = series.map((item) => ({...item, visible: true, highlight: highlight.has(item),
+        color: highlight.get(item) || "#a1abbe75"}));
+      traces.sort((a, b) => Number(a.highlight) - Number(b.highlight));
+      geometry = DashboardLineChart.drawComparison(canvas, traces, 0, {start: times[start], end: times.at(-1), at, index});
+      dateLabel.value = stamp.format(at * 1000);
+      scrubber.setAttribute("aria-valuetext", dateLabel.value);
+      rankings.replaceChildren(list("Biggest gains", gains, highlight), list("Biggest losses", losses, highlight));
+      const missing = relevant.filter(({position, values}) =>
+        !(position.opened > at) && (!values || (values[start + index].started &&
+          (values[start].value === null || values[start + index].value === null)))).length;
+      status.textContent = [
+        missing ? `${missing} position${missing === 1 ? "" : "s"} unavailable at this date` : "",
+        partial ? "Some upstream history could not be loaded" : "",
+        !series.length && !missing && !partial ? "No positions in this period" : ""
+      ].filter(Boolean).join(". ");
+    }
+
+    function selectRange() {
+      start = times.length - 1 - Number(range.value) * 4;
+      relevant = histories.filter(({position, last}) => position.status === "open" || !last || last >= times[start]);
+      series = relevant.flatMap(({position, values}) => {
+        if (!values) return [];
+        const points = PositionContributions.windowPoints(values, times, start);
+        return points?.some(([, value]) => value !== null)
+          ? [{position, values, points}] : [];
+      });
+      scrubber.max = times.length - start - 1;
+      scrubber.value = scrubber.max;
+      draw();
+    }
+
+    range.addEventListener("change", selectRange);
+    scrubber.addEventListener("input", draw);
+    const inspect = (event) => {
+      if (!geometry) return;
+      const x = event.clientX - canvas.getBoundingClientRect().left;
+      const fraction = Math.max(0, Math.min(1, (x - geometry.left) / (geometry.right - geometry.left)));
+      const index = Math.round(fraction * Number(scrubber.max));
+      if (index === Number(scrubber.value)) return;
+      scrubber.value = index;
+      draw();
+    };
+    canvas.addEventListener("pointermove", (event) => {
+      if (event.pointerType === "mouse") inspect(event);
+    });
+    canvas.addEventListener("click", inspect);
+    const resize = new ResizeObserver(() => {
+      if (canvas.clientWidth) draw();
+    });
+    resize.observe(canvas);
+    signal.addEventListener("abort", () => resize.disconnect(), {once: true});
+    selectRange();
+  }
+
   function walletPerformance(root, wallet, signal, {cutoff, note} = {}) {
     if (!walletCharts.has(root)) walletCharts.set(root, chartPanel(root, false, undefined, false));
     return loadPortfolioChart(walletCharts.get(root), wallet, signal, {cutoff, note, retry: "Reopen this profile to try again."});
@@ -851,7 +1019,7 @@ const DashboardWidgets = (() => {
     });
   }
 
-  return {portfolio, walletPerformance, openMarket, openPosition, restorePosition, restorePortfolioPosition,
+  return {portfolio, contributions, walletPerformance, openMarket, openPosition, restorePosition, restorePortfolioPosition,
     positionQuery, positionBack, marketTitle, marketImageSource, positionBadges, statuses, softUpdate, slidingSelection, loadOnScroll,
     setPortfolioRange(days) { portfolioPanel?.setRange(days); }};
 })();

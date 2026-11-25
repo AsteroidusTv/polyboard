@@ -727,3 +727,18 @@ button.chart-trade-row:is(:hover, :focus-visible) { background: #26324b; outline
   to { opacity: 1; transform: none; }
 }
 @keyframes refresh-turn { to { transform: rotate(360deg); } }
+
+#portfolio-contributions > summary { cursor: pointer; font-weight: 650; }
+#contribution-chart > .muted { margin: 8px 0; }
+#contribution-chart canvas { height: clamp(215px, 33vh, 330px); }
+.contribution-controls { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.contribution-controls select { color: inherit; background: #1b2333; border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px; }
+.contribution-controls output { color: var(--muted); font-size: .84rem; }
+#contribution-chart input[type="range"] { display: block; width: 100%; margin: 4px 0 12px; }
+.contribution-rankings { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 10px; }
+.contribution-rankings > div { min-width: 0; border: 1px solid var(--border); padding: 10px; border-radius: 8px; }
+.contribution-rankings h3 { margin: 0 0 6px; font-size: .9rem; }
+.contribution-rankings ul { display: grid; gap: 6px; list-style: none; padding: 0; margin: 0; }
+.contribution-rankings li { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.contribution-rankings li button { min-width: 0; border-inline-start: 3px solid var(--contribution-color); padding-inline-start: 7px; }
+.contribution-rankings strong { white-space: nowrap; font-variant-numeric: tabular-nums; }

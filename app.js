@@ -671,6 +671,7 @@ async function load(fresh = false) {
       signal: AbortSignal.any([request.signal, AbortSignal.timeout(30000)])
     });
     DashboardWidgets.portfolio(byId("portfolio-chart"), address, fresh);
+    DashboardWidgets.contributions(byId("portfolio-contributions"), address, request.signal, fresh);
     const response = await read;
     const data = await response.json();
     if (request !== positionRequest) return;

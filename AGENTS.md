@@ -13,7 +13,7 @@ Polyboard is a Polymarket portfolio dashboard. It uses a Python standard-library
 | Area | Entry points |
 | --- | --- |
 | HTTP routes, static assets, and portfolio reads | `server.py` |
-| Positions and portfolio UI | `index.html`, `app.js`, `dashboard-widgets.js`, `dashboard-settings.js`, `charts.js` |
+| Positions and portfolio UI | `index.html`, `app.js`, `dashboard-widgets.js`, `dashboard-settings.js`, `charts.js`, `position-contributions.js` |
 | Trade history and summaries | `trades.html`, `trades.js`, `trade_summary.py` |
 | Market search and live suggestions | `markets.html`, `markets.js`, `markets.css`, `market_catalog.py` |
 | Market discovery and precedents | `market_discovery.py`, `precedents.py`, `precedents.js` |
@@ -31,4 +31,4 @@ python3 -m unittest discover -s tests
 for file in *.js; do node --check "$file" || exit; done
 ```
 
-The default local URL is `http://127.0.0.1:8765`. CI runs the test suite and JavaScript syntax checks with Python 3.12 and Node.js 22. Production deployment is a separate operation. Follow the [runbook](docs/deployment.md) when a deployment is requested.
+The default local URL is `http://127.0.0.1:8765`. CI runs the test suite and JavaScript syntax checks with Python 3.12 and Node.js 22. For every feature, run the checks, push the completed change to GitHub, then deploy it to production using the [runbook](docs/deployment.md). Verify the live feature and record the deployed commit. Follow any release instructions given in the current request.
