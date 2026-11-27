@@ -302,7 +302,7 @@
 .activity-related-row span { margin: 0; }
 .activity-related-identity { display: flex; align-items: center; gap: 8px; overflow-wrap: anywhere; }
 .activity-related-identity .icon { flex-basis: 30px; width: 30px; height: 30px; border-radius: 6px; }
-.activity-related-prices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; max-width: 19rem; }
+.activity-related-prices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; width: 12rem; max-width: 100%; justify-self: end; }
 .activity-related-prices > span {
   display: flex; justify-content: space-between; align-items: center; gap: 5px;
   padding: 5px 7px; border-radius: 6px; background: #a1abbe13; color: #dde6fc;
