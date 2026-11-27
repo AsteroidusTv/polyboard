@@ -318,7 +318,7 @@
 #catalog-event-list-status { margin: 8px 0; font-size: .8rem; }
 .event-market-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(125px, 32%) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(12rem, 32%) auto;
   align-items: center;
   gap: 10px;
   width: 100%;
@@ -339,7 +339,16 @@
 .event-row-identity img { flex: 0 0 32px; width: 32px; height: 32px; object-fit: cover; border-radius: 7px; }
 .event-row-details { min-width: 0; overflow-wrap: anywhere; font-size: .91rem; line-height: 1.25; }
 .event-row-details small { display: block; margin-top: 3px; font-size: .72rem; font-weight: 500; }
-.event-market-row .market-quote { padding: 5px 6px; border-radius: 6px; font-size: .92rem; }
+.event-market-row .market-quote {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  justify-items: start;
+  gap: 4px;
+  padding: 5px 6px;
+  border-radius: 6px;
+  font-size: .92rem;
+  white-space: nowrap;
+}
 .event-market-row .market-quote-label { font-size: .74rem; }
 .event-market-row .market-quote[data-side="yes"] { background: #6ae4ac18; }
 .event-market-row .market-quote[data-side="no"] { background: #ff919d18; }
@@ -352,12 +361,17 @@
   .market-dialog-head, .market-dialog-actions, .market-dialog-scroll { padding-inline: 12px; }
   .event-history-legend { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .event-series-toggle { width: 100%; }
-  .event-market-row { padding-inline: 4px; gap: 6px; }
+  .event-market-row { grid-template-columns: minmax(0, 1fr) minmax(11rem, 32%) auto; padding-inline: 4px; gap: 6px; }
   .event-row-identity { gap: 6px; }
   .event-row-identity img { flex-basis: 27px; width: 27px; height: 27px; }
   .event-row-details { font-size: .83rem; }
   .event-market-row .market-quote { font-size: .8rem; }
   .market-exclusions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 400px) {
+  .event-market-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .event-market-row .market-quote-pair { grid-row: 2; justify-self: end; width: min(100%, 11rem); }
+  .event-row-chevron { grid-column: 2; grid-row: 1 / span 2; }
 }
 @media (max-width: 359px) {
   .market-exclusions { grid-template-columns: repeat(2, minmax(0, 1fr)); }

@@ -558,27 +558,49 @@
     drawEventHistory();
   }
 
-  async function loadEventHistory(signal) {
+  function showEventHistoryLoading() {
     eventCanvas.hidden = eventLegend.hidden = eventRangeControls.hidden = true;
     eventPlot = undefined;
     clearEventCursor();
     eventHistoryStatus.textContent = "Loading price history…";
     eventHistoryStatus.dataset.loading = "";
     eventHistoryStatus.hidden = false;
+  }
+
+  async function loadEventHistory(signal) {
+    showEventHistoryLoading();
+    const requested = eventSeries;
+    const isCurrent = () => !signal.aborted && requested === eventSeries;
     const timeout = AbortSignal.any([signal, AbortSignal.timeout(12000)]);
-    await Promise.all(eventSeries.map(async (series) => {
+    await Promise.all(requested.map(async (series) => {
       try {
         const params = new URLSearchParams({token: series.market.token_id});
         const response = await fetch("/api/market-history?" + params, {signal: timeout, priority: "high"});
         if (!response.ok) return;
         const {points} = await response.json();
         series.points = points.filter(([timestamp, price]) => Number.isFinite(timestamp) && Number.isFinite(price) && price >= 0 && price <= 1);
-        if (!signal.aborted && eventCanvas.hidden && series.points.length >= 2) renderEventHistory();
+        if (isCurrent() && eventCanvas.hidden && series.points.length >= 2) renderEventHistory();
       } catch {
         // Other series can still be displayed if a market has no history.
       }
     }));
-    if (!signal.aborted) renderEventHistory();
+    if (isCurrent()) renderEventHistory();
+  }
+
+  function yesPrice(market) {
+    // The catalogue pairs the Yes outcome with the chart token on binary markets.
+    const outcome = market.outcomes[0];
+    return DashboardWidgets.binaryOutcome(outcome.label) === "yes" && Number.isFinite(outcome.price)
+      ? outcome.price : -1;
+  }
+
+  function showEventMarkets(signal) {
+    eventSeries = eventMarkets.filter((market) => /^\d{1,78}$/.test(market.token_id || ""))
+      .sort((first, second) => yesPrice(second) - yesPrice(first))
+      .slice(0, seriesColors.length)
+      .map((market, slot) => ({market, slot, color: seriesColors[slot], points: [], visible: true}));
+    renderEventList();
+    loadEventHistory(signal);
   }
 
   async function loadEventMarkets(event, signal) {
@@ -599,12 +621,13 @@
       selectedEvent = full;
       eventMarkets = full.markets;
       eventListStatus.hidden = true;
-      renderEventList();
+      showEventMarkets(signal);
     } catch (failure) {
       if (signal.aborted) return;
       eventListStatus.textContent = ["TypeError", "TimeoutError"].includes(failure.name)
         ? "Submarkets couldn’t load." : failure.message;
       eventRetry.hidden = false;
+      if (!eventSeries.length) showEventMarkets(signal);
     }
   }
 
@@ -615,8 +638,7 @@
     selectedEvent = event;
     updateLocation(state, true, {event: event.slug});
     eventMarkets = event.markets;
-    eventSeries = eventMarkets.filter((market) => /^\d{1,78}$/.test(market.token_id || "")).slice(0, seriesColors.length)
-      .map((market, slot) => ({market, slot, color: seriesColors[slot], points: [], visible: true}));
+    eventSeries = [];
     eventRange = 30;
     const image = imageFor(event);
     const art = byId("catalog-event-art");
@@ -634,12 +656,16 @@
     eventSearch.value = "";
     eventSearch.hidden = matchingMarkets(event) < 7;
     eventListStatus.hidden = eventRetry.hidden = true;
-    renderEventList();
+    const signal = eventRequest.signal;
+    if (matchingMarkets(event) > event.markets.length) {
+      showEventHistoryLoading();
+      renderEventList();
+      loadEventMarkets(event, signal);
+    } else {
+      showEventMarkets(signal);
+    }
     eventDialog.showModal();
     eventViewport.scrollTop = 0;
-    const signal = eventRequest.signal;
-    loadEventHistory(signal);
-    if (matchingMarkets(event) > event.markets.length) loadEventMarkets(event, signal);
   }
 
   function eventCard(event) {
