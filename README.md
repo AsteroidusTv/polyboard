@@ -56,9 +56,9 @@ The same exports are available under `/api/public/` for clients that want distin
 
 ## Simulate outcomes
 
-After loading a wallet, click **Simulate outcomes** and check the side you hold on each position you want to model as a winner. **Gross payout** is $1 per winning share. **Net P&L** subtracts the cost of the positions included in the scenario, including reported entry fees.
+After loading a wallet, click **Simulate outcomes**. Set a default and override individual positions with **Win**, **Lose**, **Keep value**, **Sell now**, or **Exclude**. **Win** pays $1 per held share and **Lose** pays $0. **Keep value** uses the current mark, and **Sell now** also counts that value as estimated cash proceeds before fees and slippage.
 
-By default, the simulator values unchecked positions at their current marks before selling fees and slippage. You can set their value to zero or exclude them. The totals cover open positions only. Check each position that would pay out in the same scenario. The simulator prevents checking opposite sides of a market and multiple Yes winners within a [Polymarket negative-risk event](https://docs.polymarket.com/concepts/negative-risk).
+Projected value adds resolution payouts, retained value, and sale proceeds. P&L subtracts the cost of included positions, including reported entry fees. The simulator flags incompatible outcomes for the same market and multiple Yes winners within a [Polymarket negative-risk event](https://docs.polymarket.com/concepts/negative-risk).
 
 Selections stay in the page when you refresh the same wallet. Loading another wallet or reloading the page clears them.
 

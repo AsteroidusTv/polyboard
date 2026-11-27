@@ -14,7 +14,7 @@ const positionSort = byId("position-sort");
 const sortDirectionButton = byId("sort-direction");
 const sortButtons = [...document.querySelectorAll(".sort-button")];
 const scenarioToggle = byId("scenario-toggle");
-const scenarioModes = [...document.querySelectorAll("[data-scenario-other]")];
+const scenarioDefault = byId("scenario-default");
 const scenarioClear = byId("scenario-clear");
 const conflict = byId("scenario-conflict");
 const codexToggle = byId("codex-toggle");
@@ -35,9 +35,9 @@ let positionRequest;
 let reviewWallet = "";
 let reviewMode = "review";
 let reviewAttempt = 0;
-const winningTokens = new Set();
+const scenarioOverrides = new Map();
+const scenarioLabels = {win: "Win", hold: "Keep value", lose: "Lose", sell: "Sell now", exclude: "Exclude"};
 let openPositions = [];
-let scenarioOthers = "current";
 let sortKey = "current_value";
 let sortDirection = "descending";
 let displayedWallet = "";
@@ -77,39 +77,69 @@ function cell(label, ...children) {
 }
 
 function syncScenario() {
-  const winners = openPositions.filter((position) => winningTokens.has(position.token_id));
-  const payout = sum(winners, (position) => position.current_size);
-  const sellOthers = scenarioOthers === "current";
-  const scopePositions = scenarioOthers === "exclude" ? winners : openPositions;
-  const otherValue = sellOthers ? sum(
-    openPositions.filter((position) => !winningTokens.has(position.token_id)), (position) => position.current_value
-  ) : 0;
-  const projected = payout + otherValue;
-  const current = sum(scopePositions, (position) => position.current_value);
-  const cost = sum(scopePositions, (position) =>
+  const fallback = scenarioDefault.value;
+  const groups = {win: [], hold: [], lose: [], sell: [], exclude: []};
+  for (const position of openPositions) groups[scenarioOverrides.get(position.token_id) || fallback].push(position);
+  const {win, hold, lose, sell, exclude} = groups;
+  const included = [...win, ...hold, ...lose, ...sell];
+  const payout = sum(win, (position) => position.current_size);
+  const kept = sum(hold, (position) => position.current_value);
+  const saleCash = sum(sell, (position) => position.current_value);
+  const projected = payout + kept + saleCash;
+  const current = sum(included, (position) => position.current_value);
+  const cost = sum(included, (position) =>
     position.total_cost_usdc ?? position.entry_cost_usdc + (position.entry_fees_usdc ?? 0));
-  const exclude = scenarioOthers === "exclude";
-  const showAmounts = winners.length > 0 || !exclude;
-  byId("scenario-count").textContent = winners.length + " of " + openPositions.length + " checked as winners";
-  byId("scenario-scope").textContent = showAmounts
-    ? dollars.format(payout) + " payout · " + (sellOthers ? dollars.format(otherValue) + " from unchecked positions"
-      : exclude ? "Checked positions only" : "Unchecked positions at $0")
-    : "Checked positions only";
-  byId("scenario-exit-note").hidden = !sellOthers;
-  byId("scenario-value-label").textContent = exclude ? "Projected checked value" : "Projected open-position value";
-  byId("scenario-change-label").textContent = exclude ? "vs. checked value" : "vs. current value";
+  const message = scenarioConflict(win, lose);
+  const showAmounts = included.length > 0 && !message;
+  const counts = [[win, "win", "wins"], [hold, "kept"], [lose, "loss", "losses"], [sell, "sold"], [exclude, "excluded"]];
+  byId("scenario-count").textContent = counts.filter(([rows]) => rows.length).map(([rows, singular, plural = singular]) =>
+    rows.length + " " + (rows.length === 1 ? singular : plural)).join(" · ");
+  const breakdown = byId("scenario-scope");
+  breakdown.textContent = showAmounts ? [
+    win.length ? dollars.format(payout) + " at resolution" : "",
+    hold.length ? dollars.format(kept) + " kept at current value" : ""
+  ].filter(Boolean).join(" · ") : "";
+  breakdown.hidden = !breakdown.textContent;
+  byId("scenario-exit-note").hidden = !sell.length;
+  byId("scenario-sale-cash").textContent = dollars.format(saleCash);
+  byId("scenario-change-label").textContent = exclude.length ? "vs. included positions" : "vs. current value";
   byId("scenario-value").textContent = showAmounts ? dollars.format(projected) : "—";
   for (const [id, amount] of [["scenario-change", projected - current], ["scenario-pnl", projected - cost]]) {
     const field = byId(id);
     field.textContent = showAmounts ? signedDollars.format(amount) : "—";
-    field.className = color(Math.round(amount * 100));
+    field.className = showAmounts ? color(Math.round(amount * 100)) : "";
   }
-  scenarioClear.disabled = winners.length === 0;
+  conflict.textContent = message;
+  conflict.hidden = !message;
+  scenarioClear.disabled = !scenarioOverrides.size;
+  for (const select of body.querySelectorAll(".scenario-position")) {
+    select.options[0].textContent = "Default · " + scenarioLabels[fallback];
+    select.value = scenarioOverrides.get(select.dataset.token) || "";
+    select.dataset.outcome = select.value || fallback;
+  }
 }
 
-function setScenarioOthers(mode) {
-  scenarioOthers = mode;
-  for (const button of scenarioModes) button.setAttribute("aria-pressed", button.dataset.scenarioOther === mode);
+function scenarioConflict(wins, losses) {
+  const conditions = new Map();
+  const events = new Map();
+  for (const [positions, winning] of [[wins, true], [losses, false]]) {
+    for (const position of positions) {
+      if (!position.condition_id) continue;
+      const side = String(position.outcome).trim().toLowerCase();
+      const outcome = winning ? side : side === "yes" ? "no" : side === "no" ? "yes" : "";
+      if (!outcome || outcome === "—") continue;
+      const previous = conditions.get(position.condition_id);
+      if (previous && previous !== outcome) return "The outcomes conflict on “" + position.title + "”. Change one position’s scenario.";
+      conditions.set(position.condition_id, outcome);
+      if (outcome !== "yes" || !position.negative_risk || !position.event_id) continue;
+      const other = events.get(position.event_id);
+      if (other && other.condition_id !== position.condition_id) {
+        return "“" + other.title + "” and “" + position.title + "” can’t both resolve Yes. Change one position’s scenario.";
+      }
+      events.set(position.event_id, position);
+    }
+  }
+  return "";
 }
 
 function setScenarioOpen(open) {
@@ -489,44 +519,25 @@ async function monitorReview(start) {
   }
 }
 
-function mutuallyExclusive(a, b) {
-  if (a.condition_id && a.condition_id === b.condition_id && a.outcome !== b.outcome) return true;
-  return a.negative_risk && b.negative_risk && a.event_id && a.event_id === b.event_id &&
-    a.outcome === "Yes" && b.outcome === "Yes" && a.condition_id !== b.condition_id;
-}
-
-function winToggle(position) {
-  const label = element("label", "win-toggle");
-  const input = element("input");
-  input.type = "checkbox";
-  input.checked = winningTokens.has(position.token_id);
-  input.setAttribute("aria-label", "Mark " + position.outcome + " as winning: " + position.title);
-  input.addEventListener("change", () => {
-    conflict.hidden = true;
-    if (input.checked) {
-      const incompatible = openPositions.find((other) =>
-        winningTokens.has(other.token_id) && mutuallyExclusive(position, other));
-      if (incompatible) {
-        input.checked = false;
-        conflict.textContent = "These outcomes can’t both win. Uncheck " + incompatible.outcome +
-          " on “" + incompatible.title + "” to switch.";
-        conflict.hidden = false;
-        return;
-      }
-      winningTokens.add(position.token_id);
-    } else {
-      winningTokens.delete(position.token_id);
-    }
+function scenarioSelect(position) {
+  const select = element("select", "scenario-position");
+  select.dataset.token = position.token_id;
+  select.setAttribute("aria-label", "Scenario for " + position.outcome + " on " + position.title);
+  select.add(new Option("Default · " + scenarioLabels[scenarioDefault.value], ""));
+  for (const [outcome, label] of Object.entries(scenarioLabels)) select.add(new Option(label, outcome));
+  select.value = scenarioOverrides.get(position.token_id) || "";
+  select.dataset.outcome = select.value || scenarioDefault.value;
+  select.addEventListener("change", () => {
+    if (select.value) scenarioOverrides.set(position.token_id, select.value);
+    else scenarioOverrides.delete(position.token_id);
     syncScenario();
   });
-  label.append(input);
-  return label;
+  return select;
 }
 
 function marketCell(position) {
   const td = element("td");
   const market = element("div", "market");
-  market.append(winToggle(position));
   if (typeof position.icon === "string" && position.icon.startsWith("https://")) {
     const icon = element("img", "icon");
     icon.alt = "";
@@ -539,7 +550,8 @@ function marketCell(position) {
   const meta = element("div", "meta");
   const side = position.outcome === "Yes" ? " yes" : position.outcome === "No" ? " no" : "";
   meta.append(element("span", "side" + side, position.outcome),
-    element("span", "", available(position.current_size, (size) => positionShares.format(size) + " shares")));
+    element("span", "", available(position.current_size, (size) => positionShares.format(size) + " shares")),
+    scenarioSelect(position));
   details.append(DashboardWidgets.marketTitle(position, () => {
     DashboardWidgets.openPosition({...position, status: "open"}, displayedWallet);
   }), meta);
@@ -623,8 +635,8 @@ function render(positions) {
     ? sum(positions, (position) => position[key]) : null;
   const scenarioReady = !omitted && ["current_size", "entry_cost_usdc", "current_value"].every((key) => totalFor(key) !== null);
   const liveTokens = new Set(positions.map((position) => position.token_id));
-  for (const token of winningTokens) {
-    if (!liveTokens.has(token)) winningTokens.delete(token);
+  for (const token of scenarioOverrides.keys()) {
+    if (!liveTokens.has(token)) scenarioOverrides.delete(token);
   }
   conflict.hidden = true;
   const pnl = totalFor("unrealized_pnl");
@@ -658,8 +670,8 @@ async function load(fresh = false) {
     byId("position-coverage").hidden = true;
     displayedWallet = updatedAt = "";
     openPositions = [];
-    winningTokens.clear();
-    setScenarioOthers("current");
+    scenarioOverrides.clear();
+    scenarioDefault.value = "hold";
     setScenarioOpen(false);
     positionsInfo.hidden = true;
     codexActions.hidePopover();
@@ -713,16 +725,9 @@ sortDirectionButton.addEventListener("click", () => changePositionSort(sortKey))
 scenarioToggle.addEventListener("click", () => {
   setScenarioOpen(scenarioToggle.getAttribute("aria-expanded") === "false");
 });
-for (const button of scenarioModes) {
-  button.addEventListener("click", () => {
-    setScenarioOthers(button.dataset.scenarioOther);
-    syncScenario();
-  });
-}
+scenarioDefault.addEventListener("change", syncScenario);
 scenarioClear.addEventListener("click", () => {
-  winningTokens.clear();
-  for (const input of body.querySelectorAll(".win-toggle input:checked")) input.checked = false;
-  conflict.hidden = true;
+  scenarioOverrides.clear();
   syncScenario();
 });
 function openReview(mode) {

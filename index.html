@@ -77,15 +77,16 @@
       <div id="results" hidden>
         <div id="scenario-tools" hidden>
           <h3>Resolution scenario</h3>
-          <p id="scenario-help" class="muted">Check the positions whose held side wins. Each winning share pays $1.</p>
+          <p id="scenario-help" class="muted">Set an outcome per position. Each winning share pays $1.</p>
           <div class="scenario-options">
-            <span id="scenario-others-label">Unchecked positions</span>
-            <div class="chart-ranges scenario-modes" role="group" aria-labelledby="scenario-others-label">
-              <button type="button" data-scenario-other="current" aria-pressed="true">Sell at current value</button>
-              <button type="button" data-scenario-other="zero" aria-pressed="false">Value at $0</button>
-              <button type="button" data-scenario-other="exclude" aria-pressed="false">Exclude</button>
-            </div>
-            <button type="button" id="scenario-clear" class="text-button" disabled>Clear selection</button>
+            <label for="scenario-default">Default for positions</label>
+            <select id="scenario-default">
+              <option value="hold">Keep value</option>
+              <option value="lose">Lose</option>
+              <option value="sell">Sell now</option>
+              <option value="exclude">Exclude</option>
+            </select>
+            <button type="button" id="scenario-clear" class="text-button" disabled>Reset overrides</button>
           </div>
         </div>
         <div id="scenario-summary" hidden>
@@ -93,10 +94,11 @@
             <div class="scenario-scope">
               <p id="scenario-count"></p>
               <p id="scenario-scope" class="muted"></p>
-              <p id="scenario-exit-note" class="muted">Before selling fees and slippage.</p>
+              <p id="scenario-exit-note" class="muted">Sales estimated at current value, before fees and slippage.</p>
             </div>
             <dl>
-              <div><dt id="scenario-value-label">Projected open-position value</dt><dd id="scenario-value"></dd></div>
+              <div><dt>Cash from sales</dt><dd id="scenario-sale-cash"></dd></div>
+              <div><dt>Projected value</dt><dd id="scenario-value"></dd></div>
               <div><dt id="scenario-change-label">vs. current value</dt><dd id="scenario-change"></dd></div>
               <div><dt>P&amp;L incl. reported entry fees</dt><dd id="scenario-pnl"></dd></div>
             </dl>
