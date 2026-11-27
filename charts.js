@@ -4,7 +4,7 @@ const DashboardLineChart = (() => {
   const colors = {
     grid: "#2b3446", label: "#a1abbe", line: "#aabaff",
     buy: "#6ae4ac", sell: "#ffbd83", won: "#6ae4ac", lost: "#ff919d",
-    deposit: "#80ccff", settlement: "#cad5ff", background: "#111720"
+    deposit: "#80ccff", settlement: "#cad5ff", high: "#f5d28a", background: "#111720"
   };
   const shortDate = new Intl.DateTimeFormat("en-US", {month: "short", day: "numeric"});
   const chartTime = new Intl.DateTimeFormat("en-US", {hour: "numeric", minute: "2-digit"});
@@ -29,6 +29,28 @@ const DashboardLineChart = (() => {
     if (!before || !after) return undefined;
     const fraction = (time - before[0]) / (after[0] - before[0]);
     return before[1] + fraction * (after[1] - before[1]);
+  }
+
+  function highestPoint(points, start) {
+    let high;
+    for (const [time, value] of points) {
+      if (time < start || !Number.isFinite(time) || !Number.isFinite(value)) continue;
+      if (!high || value > high.value || value === high.value && time < high.time) high = {time, value};
+    }
+    return high;
+  }
+
+  function drawHigh(ctx, x, y) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(x, y, 6, 0, Math.PI * 2);
+    ctx.strokeStyle = colors.background;
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    ctx.strokeStyle = colors.high;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
   }
 
   function axisBounds(points, markerValues, price, fullPriceScale) {
@@ -59,7 +81,7 @@ const DashboardLineChart = (() => {
   }
 
   return class {
-    static drawComparison(canvas, series, days, contribution) {
+    static drawComparison(canvas, series, days, {contribution, showHigh = false} = {}) {
       const width = canvas.clientWidth;
       const height = canvas.clientHeight;
       const ctx = canvas.getContext("2d");
@@ -68,6 +90,16 @@ const DashboardLineChart = (() => {
       const last = contribution?.end ?? Math.max(...series.map(({points}) => points.at(-1)[0]));
       if (last <= first) return;
       const start = days ? Math.max(first, last - days * day) : first;
+      let high;
+      if (showHigh) {
+        for (const trace of series) {
+          if (!trace.visible) continue;
+          const peak = highestPoint(trace.points, start);
+          if (peak && (!high || peak.value > high.value || peak.value === high.value && peak.time < high.time)) {
+            high = {...peak, trace};
+          }
+        }
+      }
       const traces = contribution ? series : series.map((item) => {
         const points = item.points.filter(([timestamp]) => timestamp >= start);
         const edge = valueOnLine(item.points, start);
@@ -152,7 +184,8 @@ const DashboardLineChart = (() => {
         ctx.fillStyle = trace.color;
         ctx.fill();
       }
-      return {start, end: last, left, right, top, bottom, x,
+      if (high) drawHigh(ctx, x(high.time), y(high.value));
+      return {start, end: last, left, right, top, bottom, x, high,
         valuesAt(time) {
           return traces.flatMap((trace) => {
             if (!trace.visible) return [];
@@ -220,7 +253,7 @@ const DashboardLineChart = (() => {
       new ResizeObserver(() => this.draw()).observe(this.canvas);
     }
 
-    setData(points, markers, after, days, fullPriceScale = false, hiddenKinds = new Set(), alertTarget) {
+    setData(points, markers, after, days, fullPriceScale = false, hiddenKinds = new Set(), alertTarget, showHigh = false) {
       this.selected = null;
       this.pinned = null;
       this.tooltip.hidden = true;
@@ -233,6 +266,7 @@ const DashboardLineChart = (() => {
         last = Math.max(last, marker.time);
       }
       const floor = days ? Math.max(first, last - days * day) : first;
+      this.high = showHigh ? highestPoint(points, floor) : undefined;
       const firstVisibleIndex = points.findIndex(([time]) => time >= floor);
       this.points = firstVisibleIndex < 0 ? [] : points.slice(firstVisibleIndex);
       const interpolateStart = firstVisibleIndex > 0 && points[firstVisibleIndex][0] > floor;
@@ -249,8 +283,9 @@ const DashboardLineChart = (() => {
         }
         if (value !== undefined) this.markerLineValues.set(marker, value);
       }
-      const observations = this.points.map(([time, value]) => ({time, value,
-        detail: interpolateStart && time === floor ? "Interpolated" : undefined}));
+      const observations = this.points.map(([time, value]) => time === this.high?.time
+        ? {...this.high, kind: "high", label: days ? "Period high" : "All-time high"}
+        : {time, value, detail: interpolateStart && time === floor ? "Interpolated" : undefined});
       this.observations = [...observations, ...this.markers].sort((a, b) => a.time - b.time);
       this.start = floor === last ? floor - day / 2 : floor;
       this.end = floor === last ? last + day / 2 : last;
@@ -362,6 +397,7 @@ const DashboardLineChart = (() => {
         if (group.members.length > 1) this.drawCluster(group);
         else this.drawMarker(group.members[0], group.members[0] === this.pinned);
       }
+      if (this.high) drawHigh(ctx, x(this.high.time), y(this.high.value));
 
       if (this.selected) {
         const mx = cluster?.x ?? x(this.selected.time);

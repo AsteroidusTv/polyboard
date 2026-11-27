@@ -367,8 +367,14 @@ tbody tr:nth-child(odd) { --position-background: var(--surface); }
 .chart-value { margin-top: 2px; font-size: 1.65rem; line-height: 1.2; font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .market-chart .chart-value { font-size: .83rem; line-height: 1.45; color: var(--muted); font-weight: 500; }
 .chart-controls { display: flex; flex-wrap: wrap; gap: 6px; }
-.chart-trades-toggle { height: 36px; padding-inline: 10px; font-size: .78rem; }
-.chart-trades-toggle:is([aria-pressed="true"], [aria-expanded="true"]) { border-color: #586b9e; background: #252e49; color: #d9e2ff; }
+:is(.chart-trades-toggle, .chart-high-toggle) { height: 36px; padding-inline: 10px; font-size: .78rem; }
+:is(.chart-trades-toggle, .chart-high-toggle):is([aria-pressed="true"], [aria-expanded="true"]) { border-color: #586b9e; background: #252e49; color: #d9e2ff; }
+.chart-high {
+  display: flex; align-items: baseline; gap: 6px; width: fit-content; max-width: 100%; margin: 6px 0;
+  padding: 4px 8px; border: 1px solid #f5d28a40; border-radius: 7px; background: #f5d28a0e;
+  color: #f5d28a; font-size: .78rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere;
+}
+.chart-high::before { content: ""; flex: 0 0 7px; height: 7px; border: 1px solid currentColor; border-radius: 50%; }
 .chart-ranges { display: flex; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: 8px; }
 .chart-ranges button { min-width: 34px; height: 28px; padding: 0 5px; background: transparent; color: var(--muted); border: 0; border-radius: 5px; font-size: .78rem; }
 .chart-ranges button:hover { background: #1b2333; color: #d9e2ff; }

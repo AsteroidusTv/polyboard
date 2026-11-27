@@ -10,6 +10,7 @@ const DashboardWidgets = (() => {
   const shortDollars = new Intl.NumberFormat("en-US", {style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 1});
   const date = new Intl.DateTimeFormat("en-US", {dateStyle: "medium"});
   const time = new Intl.DateTimeFormat("en-US", {timeStyle: "short"});
+  const chartDate = new Intl.DateTimeFormat("en-US", {dateStyle: "medium", timeStyle: "short"});
   const formatPrice = (value) => price.format(value * 100) + "¢";
   const plotHelp = "Use Left and Right Arrow to inspect points. Home and End go to the first and last point.";
   let portfolioPanel;
@@ -83,6 +84,13 @@ const DashboardWidgets = (() => {
   function binaryOutcome(label) {
     const side = label?.trim().toLowerCase();
     return side === "yes" || side === "no" ? side : "";
+  }
+
+  function renderChartHigh(badge, high, format, all = false, name = "") {
+    badge.hidden = !high;
+    const text = high ? [all ? "All-time high" : "Period high", format(high.value),
+      chartDate.format(high.time * 1000), name].filter(Boolean).join(" · ") : "";
+    if (badge.textContent !== text) badge.textContent = text;
   }
 
   function softUpdate(element) {
@@ -171,12 +179,14 @@ const DashboardWidgets = (() => {
             <button type="button" data-days="7" aria-pressed="false">1W</button>
             <button type="button" data-days="30" aria-pressed="false">1M</button>
             <button type="button" data-days="90" aria-pressed="false">3M</button>
+            ${isPrice ? '<button type="button" data-days="365" aria-pressed="false">1Y</button>' : ""}
             <button type="button" data-days="0" aria-pressed="true">All</button>
           </div>
           ${isPrice ? `<div class="chart-ranges" role="group" aria-label="Price scale">
             <button type="button" data-scale="fit" aria-label="Fit price scale" aria-pressed="true">Fit</button>
             <button type="button" data-scale="full" aria-label="0 to 100 cents" aria-pressed="false">0–100¢</button>
           </div>` : showActivity ? `<button type="button" class="secondary-button chart-trades-toggle" aria-pressed="false">Show trades</button>` : ""}
+          <button type="button" class="secondary-button chart-high-toggle" aria-pressed="false">Show high</button>
         </div>
       </div>
       <p class="chart-status muted" role="status" hidden></p>
@@ -193,7 +203,8 @@ const DashboardWidgets = (() => {
       <div class="chart-footer" hidden>
         <div class="chart-legend" hidden></div>
         <p class="chart-note muted" role="status" hidden></p>
-      </div>`;
+      </div>
+      <output class="chart-high" hidden></output>`;
     const label = isPrice ? "Market price" : "Cumulative position P&L";
     const value = isPrice ? formatPrice : signedDollars.format;
     const heading = root.querySelector("h2");
@@ -213,6 +224,8 @@ const DashboardWidgets = (() => {
     }
     for (const group of controls.querySelectorAll(".chart-ranges")) slidingSelection(group);
     const tradesToggle = controls.querySelector(".chart-trades-toggle");
+    const highToggle = controls.querySelector(".chart-high-toggle");
+    const highBadge = root.querySelector(".chart-high");
     const status = root.querySelector(".chart-status");
     const total = root.querySelector(".chart-value");
     const footer = root.querySelector(".chart-footer");
@@ -228,9 +241,11 @@ const DashboardWidgets = (() => {
     let fullScale = false;
     let selectedTrade = null;
     let tradesVisible = false;
+    let highVisible = false;
     const hiddenKinds = new Set();
     function draw() {
-      chart.setData(data.points, data.markers, data.after, range, fullScale, hiddenKinds, data.alertTarget);
+      chart.setData(data.points, data.markers, data.after, range, fullScale, hiddenKinds, data.alertTarget, highVisible);
+      renderChartHigh(highBadge, chart.high, value, !range);
       if (selectedTrade !== null) {
         const marker = chart.markers.find(({tradeIndex}) => tradeIndex === selectedTrade);
         if (marker) {
@@ -302,6 +317,12 @@ const DashboardWidgets = (() => {
       }
     }
     tradesToggle?.addEventListener("click", () => showPortfolioTrades(!tradesVisible));
+    highToggle.addEventListener("click", () => {
+      highVisible = !highVisible;
+      highToggle.setAttribute("aria-pressed", String(highVisible));
+      highToggle.textContent = highVisible ? "Hide high" : "Show high";
+      draw();
+    });
 
     function selectTrade(index, fromChart = false) {
       const marker = data?.markers.find(({tradeIndex}) => tradeIndex === index);
@@ -364,9 +385,14 @@ const DashboardWidgets = (() => {
         total.hidden = !visible || !data.subtitle;
         if (!visible) {
           footer.hidden = true;
+          highBadge.hidden = true;
           return;
         }
         total.textContent = data.subtitle || "";
+        highVisible = Boolean(data.showHigh);
+        highToggle.hidden = !data.points.length;
+        highToggle.setAttribute("aria-pressed", String(highVisible));
+        highToggle.textContent = highVisible ? "Hide high" : "Show high";
         total.className = "chart-value" + (data.tone ? " " + data.tone : "");
         showFooter(data.legend || [], data.note);
         let first = data.points[0]?.[0] ?? Infinity;
@@ -538,7 +564,8 @@ const DashboardWidgets = (() => {
     scrubber.min = "0";
     scrubber.setAttribute("aria-label", "Inspect contributions by date");
     const rankings = node("div", undefined, "contribution-rankings");
-    box.replaceChildren(explanation, controls, plot, scrubber, rankings, status);
+    const highBadge = node("output", undefined, "chart-high");
+    box.replaceChildren(explanation, controls, plot, scrubber, highBadge, rankings, status);
     let series;
     let relevant;
     let start;
@@ -577,7 +604,12 @@ const DashboardWidgets = (() => {
       const traces = series.map((item) => ({...item, visible: true, highlight: highlight.has(item),
         color: highlight.get(item) || "#a1abbe75"}));
       traces.sort((a, b) => Number(a.highlight) - Number(b.highlight));
-      geometry = DashboardLineChart.drawComparison(canvas, traces, 0, {start: times[start], end: times.at(-1), at, index});
+      geometry = DashboardLineChart.drawComparison(canvas, traces, 0, {
+        contribution: {start: times[start], end: times.at(-1), at, index}, showHigh: true
+      });
+      const high = geometry?.high;
+      const position = high?.trace.position;
+      renderChartHigh(highBadge, high, signedDollars.format, false, [position?.title, position?.outcome].filter(Boolean).join(" · "));
       dateLabel.value = stamp.format(at * 1000);
       scrubber.setAttribute("aria-valuetext", dateLabel.value);
       rankings.replaceChildren(list("Biggest gains", gains, highlight), list("Biggest losses", losses, highlight));
@@ -1315,7 +1347,7 @@ const DashboardWidgets = (() => {
     const data = chartData(market.points, history, position, market.settled);
     const alertTarget = preview?.alert_target;
     if (Number.isFinite(alertTarget)) data.legend.push(["alert", "Alert threshold " + formatPrice(alertTarget)]);
-    panel.show("", preview ? {...data, heading, alertTarget} : data);
+    panel.show("", {...data, heading, alertTarget, showHigh: !preview});
     if (fill) {
       const candidates = history.map((item, index) => ({item, index})).filter(({item}) =>
         item.type === "TRADE" && item.timestamp === fill.timestamp && item.side === fill.side &&
@@ -1447,6 +1479,7 @@ const DashboardWidgets = (() => {
   bindInfoBubbles();
 
   return {portfolio, walletPerformance, openMarket, openPosition, restorePosition, restorePortfolioPosition,
-    positionQuery, positionBack, marketTitle, marketImageSource, binaryOutcome, positionBadges, statuses, softUpdate, slidingSelection, loadOnScroll,
+    positionQuery, positionBack, marketTitle, marketImageSource, binaryOutcome, renderChartHigh, positionBadges,
+    statuses, softUpdate, slidingSelection, loadOnScroll,
     setPortfolioRange(days) { portfolioPanel?.setRange(days); }};
 })();

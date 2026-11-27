@@ -34,7 +34,10 @@
   const eventCanvas = byId("event-history-chart");
   const eventCursor = byId("event-history-cursor");
   const eventAnnouncement = byId("event-history-announcement");
+  const eventControls = byId("event-history-controls");
   const eventRangeControls = byId("event-history-ranges");
+  const eventHighToggle = byId("event-history-high-toggle");
+  const eventHighBadge = byId("event-history-high");
   const eventLegend = byId("event-history-legend");
   const eventHistoryStatus = byId("event-history-status");
   const eventListStatus = byId("catalog-event-list-status");
@@ -448,7 +451,10 @@
 
   function drawEventHistory() {
     if (eventCanvas.hidden) return;
-    eventPlot = DashboardLineChart.drawComparison(eventCanvas, eventSeries.filter((series) => series.points.length >= 2), eventRange);
+    const showHigh = eventHighToggle.getAttribute("aria-pressed") === "true";
+    eventPlot = DashboardLineChart.drawComparison(eventCanvas, eventSeries.filter((series) => series.points.length >= 2), eventRange, {showHigh});
+    const high = eventPlot?.high;
+    DashboardWidgets.renderChartHigh(eventHighBadge, high, priceLabel, !eventRange, high && eventSeriesName(high.trace.market));
     if (eventCursorTime !== undefined && eventPlot && eventCursorTime >= eventPlot.start && eventCursorTime <= eventPlot.end)
       showEventCursor(eventCursorTime);
     else clearEventCursor();
@@ -529,12 +535,15 @@
   function renderEventHistory() {
     const available = eventSeries.filter((series) => series.points.length >= 2);
     delete eventHistoryStatus.dataset.loading;
-    eventCanvas.hidden = eventLegend.hidden = eventRangeControls.hidden = !available.length;
+    eventCanvas.hidden = eventLegend.hidden = eventControls.hidden = !available.length;
     eventHistoryStatus.hidden = Boolean(available.length);
     if (!available.length) {
       eventHistoryStatus.textContent = "Price history is unavailable for these markets.";
       return;
     }
+    const first = Math.min(...available.map(({points}) => points[0][0]));
+    const last = Math.max(...available.map(({points}) => points.at(-1)[0]));
+    eventRangeControls.querySelector('[data-days="365"]').hidden = last - first <= 365 * 86400;
     for (const control of eventRangeControls.querySelectorAll("button")) {
       control.setAttribute("aria-pressed", String(Number(control.dataset.days) === eventRange));
     }
@@ -559,7 +568,7 @@
   }
 
   function showEventHistoryLoading() {
-    eventCanvas.hidden = eventLegend.hidden = eventRangeControls.hidden = true;
+    eventCanvas.hidden = eventLegend.hidden = eventControls.hidden = eventHighBadge.hidden = true;
     eventPlot = undefined;
     clearEventCursor();
     eventHistoryStatus.textContent = "Loading price history…";
@@ -964,6 +973,12 @@
     showEventCursor(Math.max(start, Math.min(end, time)), true);
   });
   eventCanvas.addEventListener("blur", clearEventCursor);
+  eventHighToggle.addEventListener("click", () => {
+    const show = eventHighToggle.getAttribute("aria-pressed") === "false";
+    eventHighToggle.setAttribute("aria-pressed", String(show));
+    eventHighToggle.textContent = show ? "Hide high" : "Show high";
+    drawEventHistory();
+  });
   eventRangeControls.addEventListener("click", (event) => {
     const control = event.target.closest("button[data-days]");
     if (!control) return;

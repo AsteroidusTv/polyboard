@@ -187,11 +187,15 @@
         <section class="event-history" aria-labelledby="event-history-title">
           <div class="event-history-head">
             <h3 id="event-history-title">Price history</h3>
-            <div class="chart-ranges" id="event-history-ranges" role="group" aria-label="Event price history range" hidden>
-              <button type="button" data-days="1" aria-pressed="false">1D</button>
-              <button type="button" data-days="7" aria-pressed="false">1W</button>
-              <button type="button" data-days="30" aria-pressed="true">1M</button>
-              <button type="button" data-days="0" aria-pressed="false">All</button>
+            <div class="chart-controls" id="event-history-controls" hidden>
+              <div class="chart-ranges" id="event-history-ranges" role="group" aria-label="Event price history range">
+                <button type="button" data-days="1" aria-pressed="false">1D</button>
+                <button type="button" data-days="7" aria-pressed="false">1W</button>
+                <button type="button" data-days="30" aria-pressed="true">1M</button>
+                <button type="button" data-days="365" aria-pressed="false" hidden>1Y</button>
+                <button type="button" data-days="0" aria-pressed="false">All</button>
+              </div>
+              <button type="button" class="secondary-button chart-high-toggle" id="event-history-high-toggle" aria-pressed="false">Show high</button>
             </div>
           </div>
           <div class="event-history-legend" id="event-history-legend" role="group" aria-label="Chart markets" hidden></div>
@@ -202,6 +206,7 @@
             <div id="event-history-cursor" class="event-history-cursor" aria-hidden="true" hidden></div>
             <span id="event-history-announcement" class="sr-only" aria-live="polite"></span>
           </div>
+          <output class="chart-high" id="event-history-high" hidden></output>
         </section>
         <section class="event-market-list" aria-labelledby="event-market-title">
           <div class="event-market-head">
