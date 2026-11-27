@@ -104,6 +104,7 @@
 .watch-dialog-subtitle { margin-top: 2px; font-size: .84rem; overflow-wrap: anywhere; }
 .watch-dialog-body { overflow-y: auto; scrollbar-gutter: stable; overscroll-behavior: contain; padding: 14px 16px; }
 .watch-dialog-controls { justify-content: flex-start; margin-bottom: 10px; }
+.watch-dialog-controls > .button-link { min-height: 0; }
 .watch-alert-form { display: grid; gap: 12px; }
 .watch-alert-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .watch-alert-fields :is(select, input) {
