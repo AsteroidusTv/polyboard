@@ -69,6 +69,22 @@ const DashboardWidgets = (() => {
       ? "/media/market/v1/" + filename : url;
   }
 
+  function marketThumbnail(url) {
+    if (typeof url !== "string" || !url.startsWith("https://")) return;
+    const image = node("img", undefined, "icon");
+    image.alt = "";
+    image.decoding = "async";
+    image.loading = "lazy";
+    image.addEventListener("error", () => image.remove(), {once: true});
+    image.src = marketImageSource(url);
+    return image;
+  }
+
+  function binaryOutcome(label) {
+    const side = label?.trim().toLowerCase();
+    return side === "yes" || side === "no" ? side : "";
+  }
+
   function softUpdate(element) {
     if (reduceMotion.matches || !element.animate) return;
     activeUpdates.get(element)?.cancel();
@@ -684,9 +700,9 @@ const DashboardWidgets = (() => {
     return markers;
   }
 
-  function markerPosition({token_id, condition_id, title, outcome, slug}, extras) {
+  function markerPosition({token_id, condition_id, title, outcome, slug, icon}, extras) {
     if (!/^\d{1,78}$/.test(token_id || "")) return undefined;
-    return {token_id, condition_id, title, outcome, slug, ...extras};
+    return {token_id, condition_id, title, outcome, slug, icon, ...extras};
   }
 
   function validChartTime(timestamp) {
@@ -875,11 +891,12 @@ const DashboardWidgets = (() => {
     dialog.setAttribute("aria-labelledby", "activity-market-title");
     dialog.innerHTML = `
       <header class="activity-header">
-        <div><h2 id="activity-market-title"></h2><div class="meta" id="activity-meta"></div></div>
+        <div class="activity-identity"><span id="activity-art"></span><div><h2 id="activity-market-title"></h2><div class="meta" id="activity-meta"></div></div></div>
         <form method="dialog"><button type="submit" class="text-button activity-dismiss" aria-label="Close position" autofocus>×</button></form>
         <dl class="activity-metrics" id="activity-summary" aria-label="Position summary">
           <div><dt id="activity-entry-label">Avg. entry</dt><dd id="activity-entry">—</dd></div>
           <div><dt id="activity-price-label">Current price</dt><dd id="activity-price">—</dd></div>
+          <div id="activity-payout-metric" hidden><dt id="activity-payout-label">Potential payout</dt><dd id="activity-payout">—</dd></div>
           <div><dt id="activity-pnl-label">Unrealized P&amp;L</dt><dd id="activity-pnl">—</dd></div>
         </dl>
         <div class="activity-actions">
@@ -900,10 +917,6 @@ const DashboardWidgets = (() => {
       <div class="activity-workspace">
         <div class="activity-body" id="activity-body">
           <div id="activity-chart" class="market-chart"></div>
-          <section id="activity-related" class="activity-related" aria-labelledby="activity-related-heading" hidden>
-            <h3 id="activity-related-heading">Other markets in this event</h3>
-            <ul></ul>
-          </section>
           <div id="activity-transactions">
             <h3 id="transactions-heading">Transactions</h3>
             <table id="activity-table" aria-labelledby="transactions-heading" hidden>
@@ -913,6 +926,10 @@ const DashboardWidgets = (() => {
             <p id="activity-empty" class="muted" role="status" hidden></p>
             <p id="activity-source" class="muted" hidden>P&amp;L reported by Polymarket.</p>
           </div>
+          <section id="activity-related" class="activity-related" aria-label="Other markets in this event" hidden>
+            <button type="button" class="secondary-button" id="activity-related-toggle" aria-controls="activity-related-list" aria-expanded="false">Show related markets</button>
+            <ul id="activity-related-list" hidden></ul>
+          </section>
         </div>
         <div class="activity-order" id="activity-order" hidden></div>
       </div>`;
@@ -934,6 +951,10 @@ const DashboardWidgets = (() => {
       const row = event.target.closest("[data-trade-index]");
       if (row) panel.selectTrade(Number(row.dataset.tradeIndex));
     });
+    const relatedToggle = dialog.querySelector("#activity-related-toggle");
+    relatedToggle.addEventListener("click", () => {
+      showRelatedMarkets(dialog, relatedToggle.getAttribute("aria-expanded") === "false");
+    });
     const tools = dialog.querySelector("#activity-tools");
     const toolsToggle = dialog.querySelector("#activity-tools-toggle");
     function closeTools() {
@@ -952,6 +973,9 @@ const DashboardWidgets = (() => {
       else dialog.close();
     });
     dialog.querySelector(".activity-header form").addEventListener("submit", (event) => {
+      if (detail.ticket?.busy) event.preventDefault();
+    });
+    dialog.addEventListener("cancel", (event) => {
       if (detail.ticket?.busy) event.preventDefault();
     });
     dialog.addEventListener("close", () => {
@@ -996,7 +1020,7 @@ const DashboardWidgets = (() => {
       note: after ? "Shaded area shows the market after your last sale." : ""};
   }
 
-  function positionMetrics(dialog, position, market = null) {
+  function positionMetrics(dialog, position, market, history) {
     const open = position.status === "open";
     const entry = position.avg_price ?? position.entry_price;
     const latest = market?.points.at(-1)?.[1];
@@ -1013,10 +1037,24 @@ const DashboardWidgets = (() => {
     const result = dialog.querySelector("#activity-pnl");
     result.className = profit >= .005 ? "positive" : profit <= -.005 ? "negative" : "";
     result.textContent = Number.isFinite(profit) ? signedDollars.format(Math.abs(profit) < .005 ? 0 : profit) : "—";
+
+    const potential = open && !market?.settled;
+    const redeemed = history.filter((item) => item.type === "REDEEM");
+    const labelPayout = potential ? "Potential payout" : position.claimable ? "Claimable payout" : "Payout received";
+    const received = redeemed.length && redeemed.every((item) => Number.isFinite(item.usdc_size))
+      ? redeemed.reduce((total, item) => total + item.usdc_size, 0) : null;
+    const amount = potential ? position.current_size : position.claimable ? position.outstanding : received;
+    dialog.querySelector("#activity-payout-metric").hidden = !potential && !position.claimable && !redeemed.length;
+    dialog.querySelector("#activity-payout-label").textContent = labelPayout;
+    dialog.querySelector("#activity-payout").textContent = Number.isFinite(amount) && amount >= 0 ? dollars.format(amount) : "—";
   }
 
-  function positionHeader(dialog, position, market, preview) {
+  function positionHeader(dialog, position, market, preview, history) {
     dialog.querySelector("#activity-market-title").textContent = position.title || "Unknown market";
+    const art = dialog.querySelector("#activity-art");
+    const image = marketThumbnail(preview?.image || position.icon);
+    art.replaceChildren(...(image ? [image] : []));
+    for (const field of dialog.querySelectorAll(".activity-metrics [data-side]")) delete field.dataset.side;
     const compare = dialog.querySelector("#activity-precedents");
     const holders = dialog.querySelector("#activity-holders");
     const closed = market?.settled || ["won", "lost", "settled"].includes(position.status);
@@ -1084,6 +1122,7 @@ const DashboardWidgets = (() => {
     dialog.querySelector("#activity-summary").setAttribute("aria-label", preview ? "Market summary" : "Position summary");
     dialog.querySelector(".activity-dismiss").setAttribute("aria-label", preview ? "Close market" : "Close position");
     if (preview) {
+      dialog.querySelector("#activity-payout-metric").hidden = true;
       const subtitle = preview.event_title && preview.event_title !== preview.title ? preview.event_title : "";
       meta.replaceChildren();
       if (subtitle) meta.append(node("span", subtitle, "muted"));
@@ -1097,20 +1136,21 @@ const DashboardWidgets = (() => {
         {label: "Yes", price: preview.indicative_prices?.yes},
         {label: "No", price: preview.indicative_prices?.no}
       ];
-      for (const [id, label, value] of [
-        ["entry", first.label + " price", first.price],
-        ["price", second.label + " price", second.price],
+      for (const [id, label, value, side] of [
+        ["entry", first.label + " price", first.price, binaryOutcome(first.label)],
+        ["price", second.label + " price", second.price, binaryOutcome(second.label)],
         ["pnl", "Scheduled end", Number.isFinite(end) ? date.format(end) : "—"]
       ]) {
         dialog.querySelector(`#activity-${id}-label`).textContent = label;
         const field = dialog.querySelector(`#activity-${id}`);
+        if (side) field.parentElement.dataset.side = side;
         field.className = "";
         field.textContent = Number.isFinite(value) ? formatPrice(value) : value || "—";
       }
       return;
     }
     meta.replaceChildren(...positionBadges(position));
-    positionMetrics(dialog, position, market);
+    positionMetrics(dialog, position, market, history);
     dialog.querySelector("#activity-source").hidden = position.pnl_source !== "polymarket";
   }
 
@@ -1139,6 +1179,13 @@ const DashboardWidgets = (() => {
     }
   }
 
+  function showRelatedMarkets(dialog, expanded) {
+    const toggle = dialog.querySelector("#activity-related-toggle");
+    toggle.textContent = expanded ? "Hide related markets" : "Show related markets";
+    toggle.setAttribute("aria-expanded", String(expanded));
+    dialog.querySelector("#activity-related-list").hidden = !expanded;
+  }
+
   async function relatedMarkets(dialog, current, preview, eventSlug, signal) {
     const section = dialog.querySelector("#activity-related");
     const list = section.querySelector("ul");
@@ -1159,20 +1206,25 @@ const DashboardWidgets = (() => {
         const choice = node("button", undefined, "activity-related-row");
         choice.type = "button";
         choice.title = market.title;
-        const label = node("strong", market.label || market.title);
+        const identity = node("span", undefined, "activity-related-identity");
+        const image = marketThumbnail(market.image || event.image);
+        if (image) identity.append(image);
+        identity.append(node("strong", market.label || market.title));
         const prices = node("span", undefined, "activity-related-prices");
         for (const outcome of market.outcomes) {
-          const quote = node("span", outcome.label + " " + (Number.isFinite(outcome.price) ? percent.format(outcome.price) : "—"));
+          const quote = node("span");
+          quote.dataset.side = binaryOutcome(outcome.label);
+          quote.append(outcome.label + " ", node("strong", Number.isFinite(outcome.price) ? percent.format(outcome.price) : "—"));
           prices.append(quote);
         }
-        choice.append(label, prices);
+        choice.append(identity, prices);
         choice.addEventListener("click", () => {
           if (!stillCurrent() || detail.ticket?.busy) return;
           const keepTrade = Boolean(detail.ticket);
           if (preview?.onRelatedMarket) {
             preview.onRelatedMarket(market, event, keepTrade);
           } else {
-            openMarket({...market, event_slug: event.slug, event_title: event.title, relatedEvent: event,
+            openMarket({...market, image: market.image || event.image, event_slug: event.slug, event_title: event.title, relatedEvent: event,
               onClose: detail.onClose}, keepTrade);
           }
         });
@@ -1198,6 +1250,7 @@ const DashboardWidgets = (() => {
     detailRequest = request;
     const {dialog, panel, tools} = detail;
     tools.hidePopover();
+    if (!dialog.open) showRelatedMarkets(dialog, false);
     dialog.dataset.market = position.slug || "";
     detail.onClose = preview?.onClose;
     if (!preview && ["/", "/trades"].includes(location.pathname) && positionToken.test(position.token_id || "")) {
@@ -1209,11 +1262,11 @@ const DashboardWidgets = (() => {
     }
     const heading = preview ? (preview.outcomes?.[0]?.label || "Yes") + " price history" : undefined;
     const emptyHistory = {heading, points: [], markers: []};
-    positionHeader(dialog, position, null, preview);
+    let history = [...(position.executions || [])].sort((a, b) => b.timestamp - a.timestamp);
+    positionHeader(dialog, position, null, preview, history);
     const eventSlug = positionLink(dialog, position, preview, request.signal);
     relatedMarkets(dialog, position, preview, eventSlug, request.signal);
     dialog.querySelector("#activity-transactions").hidden = Boolean(preview);
-    let history = [...(position.executions || [])].sort((a, b) => b.timestamp - a.timestamp);
     if (!preview) transactions(dialog, history, wallet ? "Loading transactions…" : "");
     panel.show("Loading market prices…", emptyHistory);
     if (!dialog.open) dialog.showModal();
@@ -1237,6 +1290,7 @@ const DashboardWidgets = (() => {
     const requestedSlug = position.slug;
     if (fullPosition) {
       position = {...position, ...fullPosition, slug: fullPosition.slug || position.slug,
+        current_size: fullPosition.current_size ?? position.current_size,
         settlement_price: fullPosition.settlement_price ?? position.settlement_price};
     }
     if (fullPosition?.executions?.length) {
@@ -1249,11 +1303,11 @@ const DashboardWidgets = (() => {
     const hasHistory = !market.price_error && market.points.length >= 2 && market.points[0][0] < market.points.at(-1)[0];
     if (!preview) transactions(dialog, history, wallet && !market.executions ? "Transactions couldn’t load for this market." : "", hasHistory);
     if (fullPosition) {
-      positionHeader(dialog, position, market);
+      positionHeader(dialog, position, market, preview, history);
       const fullEventSlug = positionLink(dialog, position, preview, request.signal);
       if (position.slug !== requestedSlug) relatedMarkets(dialog, position, preview, fullEventSlug, request.signal);
     }
-    else if (!preview) positionHeader(dialog, position, market);
+    else if (!preview) positionHeader(dialog, position, market, preview, history);
     if (!hasHistory) {
       panel.show("Price history unavailable", emptyHistory);
       return;
@@ -1365,10 +1419,34 @@ const DashboardWidgets = (() => {
     viewport?.addEventListener("resize", position);
   }
 
+  function backdropDialog(event) {
+    // In a reserved scrollbar gutter the click targets the root, even with a modal open.
+    const dialog = event.target === document.documentElement
+      ? document.elementFromPoint(innerWidth / 2, innerHeight / 2)?.closest("dialog:modal")
+      : event.target;
+    if (!(dialog instanceof HTMLDialogElement) || !dialog.matches(":modal")) return;
+    const bounds = dialog.getBoundingClientRect();
+    if (event.clientX < bounds.left || event.clientX > bounds.right ||
+        event.clientY < bounds.top || event.clientY > bounds.bottom) return dialog;
+  }
+
+  let backdropStart;
+  document.addEventListener("pointerdown", (event) => {
+    backdropStart = event.button === 0 ? backdropDialog(event) : undefined;
+  }, true);
+  document.addEventListener("click", (event) => {
+    const startedOutside = backdropStart;
+    backdropStart = undefined;
+    const dialog = backdropDialog(event);
+    if (!event.detail || !dialog || dialog !== startedOutside) return;
+    if (dialog.requestClose) dialog.requestClose();
+    else if (dialog.dispatchEvent(new Event("cancel", {cancelable: true}))) dialog.close();
+  }, true);
+
   for (const group of document.querySelectorAll(".chart-ranges, .history-tabs")) slidingSelection(group);
   bindInfoBubbles();
 
   return {portfolio, walletPerformance, openMarket, openPosition, restorePosition, restorePortfolioPosition,
-    positionQuery, positionBack, marketTitle, marketImageSource, positionBadges, statuses, softUpdate, slidingSelection, loadOnScroll,
+    positionQuery, positionBack, marketTitle, marketImageSource, binaryOutcome, positionBadges, statuses, softUpdate, slidingSelection, loadOnScroll,
     setPortfolioRange(days) { portfolioPanel?.setRange(days); }};
 })();

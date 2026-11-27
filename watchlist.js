@@ -225,6 +225,7 @@ const DashboardWatchlist = (() => {
     for (const side of market.outcomes) {
       const quote = market.quotes[side.token_id];
       const column = el("div", undefined, "watch-quote");
+      column.dataset.side = DashboardWidgets.binaryOutcome(side.label);
       const label = quote?.fresh === false && market.state === "open" ? side.label + " · stale" : side.label;
       column.append(el("span", label, "muted"), el("strong", quote ? showPrice(quote.current) : "—"));
       const chart = sparkline(quote);

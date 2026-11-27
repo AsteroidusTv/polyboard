@@ -329,14 +329,22 @@ tbody tr:nth-child(odd) { --position-background: var(--surface); }
 #position-dialog { --position-gutter: clamp(12px, 2.3vw, 20px); width: min(760px, calc(100% - 32px)); }
 .activity-header { flex: none; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 12px; padding: 16px var(--position-gutter) 14px; border-bottom: 1px solid var(--border); }
 .activity-header > div { min-width: 0; }
+.activity-identity { display: flex; align-items: center; gap: 10px; }
+.activity-identity > div { min-width: 0; }
+#activity-art:empty { display: none; }
+#activity-art .icon { display: block; width: 38px; height: 38px; }
 .activity-header h2 { font-size: 1.16rem; line-height: 1.35; overflow-wrap: anywhere; }
 .activity-header .meta { margin-top: 6px; }
 .activity-dismiss { width: 36px; height: 36px; padding: 0; font-size: 1.4rem; }
 .activity-metrics { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); background: #111720; border: 1px solid var(--border); border-radius: 9px; }
+.activity-metrics:has(#activity-payout-metric:not([hidden])) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .activity-metrics > div { min-width: 0; padding: 7px 12px; }
 .activity-metrics > div + div { border-inline-start: 1px solid var(--border); }
 .activity-metrics dt { font-size: .77rem; }
 .activity-metrics dd { margin-top: 1px; font-size: 1.05rem; }
+.activity-metrics [data-side="yes"] { background: #6ae4ac0c; color: var(--positive); }
+.activity-metrics [data-side="no"] { background: #ff919d0c; color: var(--negative); }
+.activity-metrics [data-side] dt { color: inherit; font-weight: 600; }
 .activity-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 14px var(--position-gutter); background: #101620; }
 #activity-transactions > p { font-size: .86rem; }
 #activity-transactions > :not([hidden]) + p { margin-top: 8px; }
@@ -616,6 +624,9 @@ button.chart-trade-row:is(:hover, :focus-visible) { background: #26324b; outline
   .fee-totals { gap: 8px; }
   .activity-metrics > div { padding-inline: 7px; }
   .activity-metrics dt { font-size: .7rem; }
+  .activity-metrics:has(#activity-payout-metric:not([hidden])) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .activity-metrics:has(#activity-payout-metric:not([hidden])) > :nth-child(3) { border-inline-start: 0; }
+  .activity-metrics:has(#activity-payout-metric:not([hidden])) > :nth-child(n+3) { border-top: 1px solid var(--border); }
   .market-chart .chart-header { align-items: flex-start; gap: 6px 12px; }
   .market-chart .chart-ranges button { min-width: 29px; }
   .chart-tooltip.is-cluster { --trade-row-inset: 6px; padding: 8px 9px; }

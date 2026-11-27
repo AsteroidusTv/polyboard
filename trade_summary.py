@@ -127,6 +127,7 @@ def summarize_token(token, condition, position, combo, executions, basis_changed
         "status": status,
         "opened": opened,
         "last_activity": last,
+        "current_size": number((combo or position).get("current_size")) if state == "open" else None,
         "avg_price": number(position.get("avg_price")) if state == "open" else None,
         "current_price": number(position.get("current_price")) if state == "open" else None,
         "unrealized_pnl": number(position.get("unrealized_pnl")) if state == "open" else None,

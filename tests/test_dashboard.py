@@ -55,6 +55,12 @@ class PrecedentTests(unittest.TestCase):
 
 
 class PortfolioTests(unittest.TestCase):
+    def test_open_trade_summary_preserves_remaining_shares_for_payout(self):
+        position = {"token_id": "2", "status": "OPEN", "current_size": 6, "total_size": 10, "current_value": 2.4}
+        result, = build_trade_summary([position], [], [])
+        self.assertEqual(result["current_size"], 6)
+        self.assertEqual(result["outstanding"], 2.4)
+
     def test_partial_sale_and_final_payout_do_not_count_twice(self):
         activity = [{"token_id": "2", "condition_id": "a", "type": kind, "side": side,
                      "size": shares, "usdc_size": amount, "price": amount / shares, "timestamp": index}
@@ -193,6 +199,26 @@ class WatchlistTests(unittest.TestCase):
 
 
 class MarketCatalogTests(unittest.TestCase):
+    def test_event_order_uses_prices_dates_or_yes_probability(self):
+        cases = [
+            ([("↑ 75,000", 0.8), ("↓ $55,000", 0.05), ("$58k–$60k", 0.1), ("Below $50k", 0.15)],
+             ["Below $50k", "↓ $55,000", "$58k–$60k", "↑ 75,000"]),
+            ([("Jan 15, 2027", 0.8), ("by November 30, 2026", 0.1), ("31 Dec 2026", 0.5), ("Other", 0.9)],
+             ["by November 30, 2026", "31 Dec 2026", "Jan 15, 2027", "Other"]),
+            ([("Casey", 0.1), ("Morgan", 0.7), ("Taylor", 0.2), ("Unknown", None)],
+             ["Morgan", "Taylor", "Casey", "Unknown"]),
+        ]
+        for choices, expected in cases:
+            with self.subTest(expected=expected):
+                rows = [{"slug": f"option-{index}", "question": "Will this option win?", "groupItemTitle": label,
+                         "active": True, "acceptingOrders": True, "clobTokenIds": ["1", "2"],
+                         "outcomes": ["No", "Yes"], "outcomePrices": [None if yes is None else 1 - yes, yes]}
+                        for index, (label, yes) in enumerate(choices)]
+                event = {"slug": "event", "title": "Choose an outcome", "markets": rows}
+                with patch.object(market_catalog, "gamma_by_slug", return_value=event):
+                    card, = market_catalog.browse_markets({"event": ["event"]})["events"]
+                self.assertEqual([market["label"] for market in card["markets"]], expected)
+
     def test_search_preview_keeps_matching_submarket_and_drops_unrelated_results(self):
         def candidate(slug, title, price):
             return {"slug": slug, "question": title, "active": True, "acceptingOrders": True,

@@ -1,6 +1,7 @@
 """Read-only browsing of Polymarket events and their open markets."""
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from calendar import month_abbr, month_name
+from datetime import date, datetime, timezone
 from math import isfinite
 import re
 from time import time
@@ -26,6 +27,18 @@ PREVIEW_MARKETS = 4
 SEARCH_SUGGESTIONS = 6
 TOKEN = re.compile(r"[0-9]{1,78}")
 SEARCH_STOP = set("a an and at by does for from in is of on or the to what when which who will with".split())
+MONTHS = {name.lower(): index for names in (month_abbr, month_name)
+          for index, name in enumerate(names) if index}
+MONTHS["sept"] = 9
+DATE_OPTION = re.compile(
+    r"(?P<month>[a-z]+)\.?(?:\s+(?P<day>\d{1,2})(?:st|nd|rd|th)?)?(?:[,\s]+(?P<year>\d{4}))?"
+)
+DAY_FIRST_OPTION = re.compile(r"(?P<day>\d{1,2})(?:st|nd|rd|th)?\s+(?P<month>[a-z]+)\.?(?:[,\s]+(?P<year>\d{4}))?")
+LEVEL_OPTION = re.compile(r"(?:[↑↓<>≤≥]\s*|(?:above|below|under|over|at least)\s+)?\$?\s*"
+                          r"(-?\d[\d,]*(?:\.\d+)?)\s*([kmb])?\s*(?:%|\+)?")
+LEVEL_RANGE = re.compile(LEVEL_OPTION.pattern + r"\s*(?:-|–|—|\bto\b)\s*" + LEVEL_OPTION.pattern)
+PRICE_IN_QUESTION = re.compile(r"\$\s*(\d[\d,]*(?:\.\d+)?)([kmb])?\b")
+RATE_OPTION = re.compile(r"(\d+(?:\.\d+)?)\+?\s*bps\s+(decrease|increase|cut|hike)")
 
 
 class CatalogError(ValueError):
@@ -144,7 +157,72 @@ def matching_search_terms(text, sought, prefix):
     return matched
 
 
-def event_card(event, category, excluded, side, band, after, before, liquidity, spread, sought, prefix):
+def date_option(market):
+    label = clean(market["label"]).strip().rstrip("?")
+    # A label can be the date itself or a question ending in a deadline.
+    label = re.split(r"\b(?:by|on|before|end of)\s+", label)[-1]
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", label):
+        try:
+            return date.fromisoformat(label)
+        except ValueError:
+            return None
+    match = DATE_OPTION.fullmatch(label) or DAY_FIRST_OPTION.fullmatch(label)
+    if not match or match["month"] not in MONTHS:
+        return None
+    month = MONTHS[match["month"]]
+    day = int(match["day"] or 1)
+    try:
+        if match["year"]:
+            return date(int(match["year"]), month, day)
+        end = datetime.fromtimestamp(market["end_at"], timezone.utc) if market["end_at"] else None
+        year = end.year if end else 2000
+        if end and month == 12 and end.month == 1:
+            year -= 1
+        return date(year, month, day)
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+def level_option(market):
+    label = clean(market["label"]).strip()
+    rate = RATE_OPTION.fullmatch(label)
+    if rate:
+        value = float(rate[1])
+        return "rate", -value if rate[2] in ("cut", "decrease") else value
+    if label == "no change":
+        return "rate", 0
+    level = LEVEL_OPTION.fullmatch(label) or LEVEL_RANGE.fullmatch(label)
+    if not level and market["label"] == market["title"]:
+        level = PRICE_IN_QUESTION.search(label)
+    if level:
+        value = number(level[1].replace(",", ""))
+        if value is not None:
+            return "level", value * {"k": 1_000, "m": 1_000_000, "b": 1_000_000_000}.get(level[2], 1)
+    return None
+
+
+def ordered_event_markets(markets):
+    if len(markets) < 2:
+        return markets
+    catchalls = {"other", "none", "none of the above", "any other"}
+    options = [market for market in markets if clean(market["label"]).strip() not in catchalls]
+    rest = [market for market in markets if clean(market["label"]).strip() in catchalls]
+    dates = [date_option(market) for market in options]
+    if all(value is not None for value in dates) and len(set(dates)) > 1:
+        return [market for _, market in sorted(zip(dates, options), key=lambda pair: pair[0])] + rest
+    levels = [level_option(market) for market in options]
+    if (len(set(levels)) > 1 and all(level is not None for level in levels)
+            and len({level[0] for level in levels}) == 1):
+        return [market for _, market in sorted(zip(levels, options), key=lambda pair: pair[0][1])] + rest
+    return sorted(markets, key=yes_price, reverse=True)
+
+
+def yes_price(market):
+    return next((outcome["price"] for outcome in market["outcomes"]
+                 if clean(outcome["label"]) == "yes" and outcome["price"] is not None), -1)
+
+
+def event_card(event, category, excluded, side, band, after, before, liquidity, spread, sought, prefix, *, suggest=False):
     slug = event.get("slug") or ""
     tags = {tag.get("slug") for tag in event.get("tags") or []}
     if (not SLUG.fullmatch(slug) or event.get("closed") or tags & excluded or
@@ -172,6 +250,8 @@ def event_card(event, category, excluded, side, band, after, before, liquidity, 
         return None
     ranked.sort(key=lambda item: item[0], reverse=True)
     markets = [market for _, market in ranked]
+    if not suggest:
+        markets = ordered_event_markets(markets)
     return {"slug": slug, "title": title or markets[0]["title"], "image": thumbnail(event, (event.get("markets") or [{}])[0]),
             "categories": [tag for tag in CATEGORIES if tag in tags], "markets": markets, "market_count": open_count,
             "end_at": min((row["end_at"] for row in markets if row["end_at"]), default=None),
@@ -180,11 +260,8 @@ def event_card(event, category, excluded, side, band, after, before, liquidity, 
             "created_at": epoch(event.get("createdAt")) or 0}
 
 
-def preview_card(card, *, search):
+def preview_card(card):
     markets = card["markets"]
-    if not search and all({clean(outcome["label"]) for outcome in market["outcomes"]} == {"yes", "no"} for market in markets):
-        markets = sorted(markets, key=lambda market: market["outcomes"][0]["price"]
-                         if market["outcomes"][0]["price"] is not None else -1, reverse=True)
     return {**card, "matching_market_count": len(markets), "markets": markets[:PREVIEW_MARKETS]}
 
 
@@ -248,7 +325,8 @@ def browse_markets(query):
             data = gamma_page("events/keyset", tuple(request), int(time() // 60))
             events, following = data["events"], data.get("next_cursor")
         for event in events:
-            card = event_card(event, category, excluded, side, band, after, before, liquidity, spread, sought, prefix)
+            card = event_card(event, category, excluded, side, band, after, before, liquidity, spread, sought, prefix,
+                              suggest=suggest)
             if card:
                 cards.setdefault(card["slug"], card)
         if following == cursor:
@@ -266,5 +344,5 @@ def browse_markets(query):
         return {"events": [{**card, "markets": card["markets"][:1]} for card in result[:SEARCH_SUGGESTIONS]],
                 "next_cursor": None}
     if query.get("preview") == ["1"]:
-        result = [preview_card(card, search=bool(q and parts is None)) for card in result]
+        result = [preview_card(card) for card in result]
     return {"events": result, "next_cursor": cursor}

@@ -388,16 +388,11 @@
     suggestionTimer = setTimeout(() => loadSuggestions(q), 250);
   }
 
-  function shortOutcome(label) {
-    const side = label.toLowerCase();
-    return side === "yes" || side === "no" ? side : "";
-  }
-
   function quotePair(market, compact = false) {
     const pair = node("span", undefined, "market-quote-pair");
     for (const item of market.outcomes) {
       const quote = node("span", undefined, "market-quote");
-      quote.dataset.side = shortOutcome(item.label);
+      quote.dataset.side = DashboardWidgets.binaryOutcome(item.label);
       const price = item.price;
       const label = !compact || !Number.isFinite(price) ? priceLabel(price)
         : price > 0 && price < .001 ? "<0.1%" : price < 1 && price > .999 ? ">99.9%" : shortPercent.format(price);
@@ -413,10 +408,10 @@
     row.setAttribute("aria-haspopup", "dialog");
     row.setAttribute("aria-label", "Show trade · " + market.title);
     const identity = node("span", undefined, "event-row-identity");
-    const image = market.image !== event.image && imageFor(market, true);
+    const image = imageFor(market.image ? market : event, true);
     const series = eventSeries.find((item) => item.market.slug === market.slug);
     if (image) identity.append(image);
-    else if (series) {
+    if (series && (!image || !market.image || market.image === event.image)) {
       const swatch = node("span", undefined, "event-series-key");
       swatch.dataset.series = series.slot;
       swatch.setAttribute("aria-hidden", "true");
@@ -461,7 +456,7 @@
 
   function eventSeriesName(market) {
     const outcome = market.outcomes[0].label;
-    return shortOutcome(outcome) ? market.label
+    return DashboardWidgets.binaryOutcome(outcome) ? market.label
       : market.title === selectedEvent.title ? outcome : market.label + " · " + outcome;
   }
 
@@ -602,7 +597,7 @@
       const full = events.find(({slug}) => slug === event.slug);
       if (!full) throw new Error("Matching submarkets are no longer available.");
       selectedEvent = full;
-      eventMarkets = orderedMarkets(full);
+      eventMarkets = full.markets;
       eventListStatus.hidden = true;
       renderEventList();
     } catch (failure) {
@@ -613,20 +608,13 @@
     }
   }
 
-  function orderedMarkets(event) {
-    if (state.q && !URL.canParse(state.q)) return event.markets;
-    const binary = event.markets.every((market) => market.outcomes.every((outcome) => shortOutcome(outcome.label)));
-    return binary ? [...event.markets].sort((first, second) =>
-      (second.outcomes[0].price ?? -1) - (first.outcomes[0].price ?? -1)) : event.markets;
-  }
-
   function openEvent(event) {
     restoreRequest?.abort();
     eventRequest?.abort();
     eventRequest = new AbortController();
     selectedEvent = event;
     updateLocation(state, true, {event: event.slug});
-    eventMarkets = orderedMarkets(event);
+    eventMarkets = event.markets;
     eventSeries = eventMarkets.filter((market) => /^\d{1,78}$/.test(market.token_id || "")).slice(0, seriesColors.length)
       .map((market, slot) => ({market, slot, color: seriesColors[slot], points: [], visible: true}));
     eventRange = 30;
@@ -672,7 +660,7 @@
     title.append(node("h3", event.title), cardAction);
     identity.append(title);
     const options = node("div", undefined, "market-card-options");
-    const markets = orderedMarkets(event).slice(0, 2);
+    const markets = event.markets.slice(0, 2);
     if (count === 1) {
       const market = markets[0];
       if (market.title !== event.title && market.label !== event.title) {
@@ -684,7 +672,13 @@
       for (const market of markets) {
         const row = node("div", undefined, "market-preview-row");
         if (market.title === event.title) row.classList.add("market-preview-summary");
-        else row.append(node("span", market.label, "market-preview-label"));
+        else {
+          const rowIdentity = node("span", undefined, "market-preview-identity");
+          const icon = market.image !== event.image && imageFor(market);
+          if (icon) rowIdentity.append(icon);
+          rowIdentity.append(node("span", market.label, "market-preview-label"));
+          row.append(rowIdentity);
+        }
         row.append(quotePair(market, true));
         options.append(row);
       }
