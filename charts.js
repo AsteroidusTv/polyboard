@@ -81,7 +81,7 @@ const DashboardLineChart = (() => {
   }
 
   return class {
-    static drawComparison(canvas, series, days, {contribution, showHigh = false} = {}) {
+    static drawComparison(canvas, series, days, contribution) {
       const width = canvas.clientWidth;
       const height = canvas.clientHeight;
       const ctx = canvas.getContext("2d");
@@ -91,7 +91,7 @@ const DashboardLineChart = (() => {
       if (last <= first) return;
       const start = days ? Math.max(first, last - days * day) : first;
       let high;
-      if (showHigh) {
+      if (contribution) {
         for (const trace of series) {
           if (!trace.visible) continue;
           const peak = highestPoint(trace.points, start);
@@ -266,7 +266,8 @@ const DashboardLineChart = (() => {
         last = Math.max(last, marker.time);
       }
       const floor = days ? Math.max(first, last - days * day) : first;
-      this.high = showHigh ? highestPoint(points, floor) : undefined;
+      const high = showHigh ? highestPoint(points, floor) : undefined;
+      this.high = high && {...high, kind: "high", label: days ? "Period high" : "All-time high"};
       const firstVisibleIndex = points.findIndex(([time]) => time >= floor);
       this.points = firstVisibleIndex < 0 ? [] : points.slice(firstVisibleIndex);
       const interpolateStart = firstVisibleIndex > 0 && points[firstVisibleIndex][0] > floor;
@@ -284,7 +285,7 @@ const DashboardLineChart = (() => {
         if (value !== undefined) this.markerLineValues.set(marker, value);
       }
       const observations = this.points.map(([time, value]) => time === this.high?.time
-        ? {...this.high, kind: "high", label: days ? "Period high" : "All-time high"}
+        ? this.high
         : {time, value, detail: interpolateStart && time === floor ? "Interpolated" : undefined});
       this.observations = [...observations, ...this.markers].sort((a, b) => a.time - b.time);
       this.start = floor === last ? floor - day / 2 : floor;
@@ -519,7 +520,7 @@ const DashboardLineChart = (() => {
       const timelineItem = point.priceLabel !== undefined;
       const price = point.priceLabel ?? this.options.value(point.value);
       const title = (point.label || this.options.label) + " · " + price;
-      const format = timelineItem ? executionTime : this.options.price ? dateTime : fullDate;
+      const format = timelineItem ? executionTime : this.options.price || point.kind === "high" ? dateTime : fullDate;
       const date = format.format(point.time * 1000);
       const detail = [date, point.detail];
       if (this.options.price && point.tradeIndex !== undefined) {
@@ -636,6 +637,10 @@ const DashboardLineChart = (() => {
       const {x, left, right} = this.plot;
       if (px < left - 8 || px > right + 8) return this.select(this.pinned);
       const group = this.markerGroupAt(px, py);
+      if (this.high && (!group || event.type === "pointermove" && !group.members.includes(this.pinned)) &&
+          Math.hypot(px - x(this.high.time), py - this.plot.y(this.high.value)) <= 8) {
+        return this.select(this.high);
+      }
       if (group) return this.select(group.members.includes(this.pinned) ? this.pinned : group.members[0]);
       if (!this.points.length) return this.select(this.pinned);
       let best;
